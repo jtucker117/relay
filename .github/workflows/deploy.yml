@@ -18,9 +18,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - run: npm ci
+      # npm install (not `npm ci`) because there's no committed package-lock.json yet.
+      - run: npm install
 
       # Vite inlines VITE_* at build time, so the Supabase URL/anon key must be present here.
       # The anon key is public (RLS protects data), but we still keep both as repo secrets.
