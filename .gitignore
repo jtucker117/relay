@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.astro/
+.DS_Store
+npm-debug.log*
+*.local
+
+# Env — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Supabase local
+supabase/.branches
+supabase/.temp

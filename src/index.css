@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+/* Relay design tokens — from RELAY/README.md "Design tokens".
+   Distinct from the sitestac marketing site (which is blue/Sora/Inter). */
+:root {
+  /* Canvas */
+  --canvas: #F1F0EC;
+  --panel: #FBFBFA;
+  --rail: #F6F5F2;
+  /* Ink */
+  --ink: #1A1A1E;
+  --ink-2: #22222A;
+  --ink-soft: #5C5C63;
+  --ink-soft-2: #6C6C72;
+  --ink-muted: #8A8A90;
+  --ink-muted-2: #9A9AA0;
+  --line: #E4E3DE;
+  --line-2: #E7E6E0;
+  --line-3: #EFEEE9;
+  /* Sidebar */
+  --sidebar: #161619;
+  --sidebar-active: #26262C;
+  --sidebar-muted: #9A9AA2;
+  /* Accent (indigo) */
+  --accent: #5B4FE9;
+  --accent-hover: #4C41D6;
+  --accent-light: #EDE7FF;
+  --accent-light-2: #F4F2FF;
+  /* Status */
+  --green: #2C7A50;
+  --green-2: #3E9E6E;
+  --green-bg: #DDF0E4;
+  --amber: #B4632E;
+  --amber-2: #E0932E;
+  --amber-bg: #F7E7D6;
+  --blue: #2E9BD6;
+  --purple: #7C5CFF;
+  /* Package colors */
+  --pkg-one: #3E9E6E;
+  --pkg-three: #5B4FE9;
+  --pkg-multi: #E0932E;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: 'Figtree', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, .display, .num {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+}
+* { box-sizing: border-box; }

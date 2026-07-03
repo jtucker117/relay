@@ -1,0 +1,10 @@
+# Cloudflare Worker config for Relay (Vite/React SPA, assets-only).
+# `npm run build` outputs static files to ./dist, served as Workers Static Assets.
+# Served at relay.sitestac.com (add the custom domain in the Cloudflare dashboard).
+name = "relay"
+compatibility_date = "2025-06-01"
+
+[assets]
+directory = "./dist"
+# SPA fallback: serve index.html for any unmatched path so React Router handles routing.
+not_found_handling = "single-page-application"
