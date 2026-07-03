@@ -1,28 +1,32 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Screen from '../components/Screen'
+import QuickAddDeal from '../components/QuickAddDeal'
 import { supabase } from '../lib/supabase'
 import { STAGES, PACKAGE_COLOR, pkg } from '../lib/catalog'
 import { dealTotals, pipelineTotal, weightedPipeline, money } from '../lib/money'
 import type { Deal } from '../lib/types'
 
-// Critical-1 proof-of-wiring: reads real deals from Supabase, scoped by RLS to the org.
-// Drag-and-drop, deal detail slide-over, and quick-add come next.
+// Reads real deals from Supabase (RLS-scoped to the org) + quick-add.
+// Drag-and-drop and the deal detail slide-over come next.
 export default function Pipeline() {
   const [deals, setDeals] = useState<Deal[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
+  const [showAdd, setShowAdd] = useState(false)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     supabase
       .from('deals')
       .select('*')
       .order('updated_at', { ascending: false })
       .then(({ data, error }) => {
         if (error) setErr(error.message)
-        else setDeals((data as Deal[]) ?? [])
+        else { setDeals((data as Deal[]) ?? []); setErr(null) }
         setLoading(false)
       })
   }, [])
+
+  useEffect(() => { load() }, [load])
 
   const stat = (label: string, value: string) => (
     <div style={{ display: 'grid', gap: 2 }}>
@@ -32,7 +36,12 @@ export default function Pipeline() {
   )
 
   return (
-    <Screen title="Pipeline" subtitle="Every deal in flight">
+    <Screen
+      title="Pipeline"
+      subtitle="Every deal in flight"
+      actions={<button onClick={() => setShowAdd(true)} style={newDealBtn}>+ New deal</button>}
+    >
+      {showAdd && <QuickAddDeal onClose={() => setShowAdd(false)} onCreated={load} />}
       <div style={{ display: 'flex', gap: 36, marginBottom: 20 }}>
         {stat('Open deals', String(deals.filter((d) => d.stage !== 'won').length))}
         {stat('Pipeline value', money(pipelineTotal(deals)))}
@@ -88,7 +97,7 @@ export default function Pipeline() {
 
       {!loading && !err && deals.length === 0 && (
         <p style={{ color: 'var(--ink-soft)', marginTop: 16 }}>
-          No deals yet. Seed some rows in Supabase or add the quick-add form (next milestone).
+          No deals yet. Click <b>+ New deal</b> to add your first lead.
         </p>
       )}
     </Screen>
@@ -111,4 +120,8 @@ const pkgBadge: React.CSSProperties = {
 const errorBox: React.CSSProperties = {
   background: 'var(--amber-bg)', border: '1px solid var(--amber-2)', color: 'var(--amber)',
   borderRadius: 12, padding: 14, maxWidth: 560,
+}
+const newDealBtn: React.CSSProperties = {
+  padding: '9px 16px', border: 'none', borderRadius: 9, background: 'var(--accent)',
+  color: '#fff', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
 }
