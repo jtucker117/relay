@@ -54,3 +54,23 @@ h1, h2, h3, h4, .display, .num {
   font-family: 'Space Grotesk', system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
+
+/* Card + control interactions (inline styles can't express :hover). */
+.deal-card {
+  transition: box-shadow .16s ease, transform .16s ease, border-color .16s ease;
+  cursor: pointer;
+}
+.deal-card:hover {
+  box-shadow: 0 12px 26px -16px rgba(20, 20, 25, .38);
+  transform: translateY(-2px);
+  border-color: var(--line);
+}
+.icon-btn {
+  display: grid; place-items: center; width: 36px; height: 36px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+  color: var(--ink-soft); cursor: pointer; transition: background .14s ease;
+  position: relative;
+}
+.icon-btn:hover { background: var(--rail); }
+.pipe-scroll::-webkit-scrollbar { height: 8px; }
+.pipe-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
