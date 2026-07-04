@@ -20,7 +20,13 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
       const { data, error } = await supabase.functions.invoke('generate-preview', {
         body: { company: deal.company, packageId: deal.package_id, brief: deal.brief ?? {} },
       })
-      if (error) throw error
+      if (error) {
+        // Surface the function's JSON error body (FunctionsHttpError hides it behind .context).
+        let detail = error.message
+        const ctx = (error as { context?: { json?: () => Promise<{ error?: string }> } }).context
+        if (ctx?.json) { try { const b = await ctx.json(); if (b?.error) detail = b.error } catch { /* keep generic */ } }
+        throw new Error(detail)
+      }
       if (data?.error) throw new Error(data.error)
       if (!data?.html) throw new Error('No HTML returned.')
       setHtml(data.html)
