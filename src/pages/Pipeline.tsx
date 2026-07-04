@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Screen from '../components/Screen'
 import QuickAddDeal from '../components/QuickAddDeal'
+import DealDetail from '../components/DealDetail'
 import Icon from '../components/Icon'
 import { supabase } from '../lib/supabase'
 import { STAGES, PACKAGE_COLOR, pkg } from '../lib/catalog'
@@ -14,6 +15,7 @@ export default function Pipeline() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [openDeal, setOpenDeal] = useState<Deal | null>(null)
   const [q, setQ] = useState('')
 
   const load = useCallback(() => {
@@ -49,6 +51,7 @@ export default function Pipeline() {
       }
     >
       {showAdd && <QuickAddDeal onClose={() => setShowAdd(false)} onCreated={load} />}
+      {openDeal && <DealDetail deal={openDeal} onClose={() => setOpenDeal(null)} onChange={load} />}
 
       {/* Inline stat bar */}
       <div style={statBar}>
@@ -85,7 +88,7 @@ export default function Pipeline() {
                     const color = PACKAGE_COLOR[d.package_id]
                     const n = d.addons.length
                     return (
-                      <div key={d.id} className="deal-card" style={dealCard}>
+                      <div key={d.id} className="deal-card" style={dealCard} onClick={() => setOpenDeal(d)}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                           <b style={{ fontSize: 14.5 }}>{d.company}</b>
                           <span style={{ ...pkgBadge, background: color + '1F', color }}>{pkg(d.package_id).name}</span>
