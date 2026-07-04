@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
 import { PACKAGES, ADDONS, STAGES, PACKAGE_COLOR, pkg, stage as stageDef } from '../lib/catalog'
@@ -6,16 +6,14 @@ import { dealTotals, money } from '../lib/money'
 import PreviewSection from './PreviewSection'
 import type { Comment, Deal, PackageId, Stage } from '../lib/types'
 
-// Right slide-over: edit a deal end-to-end. Stage stepper, contact, package/add-on
-// editor with live totals, project brief, and the notes thread.
+// High-fidelity deal detail — two-column slide-over matching the Relay prototype.
 export default function DealDetail({ deal, onClose, onChange }: {
-  deal: Deal
-  onClose: () => void
-  onChange: () => void
+  deal: Deal; onClose: () => void; onChange: () => void
 }) {
   const { profile } = useAuth()
   const [d, setD] = useState<Deal>(deal)
   const [editPlan, setEditPlan] = useState(false)
+  const [editContact, setEditContact] = useState(false)
   const [comments, setComments] = useState<Comment[]>([])
   const [draft, setDraft] = useState('')
 
@@ -27,27 +25,21 @@ export default function DealDetail({ deal, onClose, onChange }: {
   }, [deal.id])
   useEffect(() => { loadComments() }, [loadComments])
 
-  // Persist a patch to the deal (optimistic local + Supabase), then refresh the board.
   async function patch(fields: Partial<Deal>) {
     const next = { ...d, ...fields }
     setD(next)
     await supabase.from('deals').update({ ...fields, updated_at: new Date().toISOString() }).eq('id', deal.id)
     onChange()
   }
-
   function toggleAddon(id: string) {
-    const addons = d.addons.includes(id) ? d.addons.filter((a) => a !== id) : [...d.addons, id]
-    patch({ addons })
+    patch({ addons: d.addons.includes(id) ? d.addons.filter((a) => a !== id) : [...d.addons, id] })
   }
-
   async function post() {
     const text = draft.trim()
     if (!text || !profile) return
     const initials = profile.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
     setDraft('')
-    await supabase.from('comments').insert({
-      org_id: profile.org_id, deal_id: deal.id, author: profile.name, initials, text,
-    })
+    await supabase.from('comments').insert({ org_id: profile.org_id, deal_id: deal.id, author: profile.name, initials, text })
     loadComments()
   }
 
@@ -55,174 +47,173 @@ export default function DealDetail({ deal, onClose, onChange }: {
   const p = pkg(d.package_id)
   const color = PACKAGE_COLOR[d.package_id]
   const brief = d.brief
+  const curIdx = STAGES.findIndex((s) => s.id === d.stage)
 
   return (
     <div style={overlay} onClick={onClose}>
       <aside style={panel} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div style={header}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ ...stageChip, background: stageDef(d.stage).color + '22', color: stageDef(d.stage).color }}>
-              {stageDef(d.stage).name}
-            </span>
-            <span style={{ ...pkgBadge, background: color + '1F', color }}>{p.name}</span>
-            <button onClick={onClose} style={{ ...closeBtn, marginLeft: 'auto' }} aria-label="Close">×</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ ...chip, background: stageDef(d.stage).color + '22', color: stageDef(d.stage).color }}>{stageDef(d.stage).name}</span>
+            <span style={{ ...chip, background: color + '1F', color }}>{p.name}</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <button style={openInvoiceBtn} title="Invoicing is the next build">🧾 Open invoice</button>
+              <button onClick={onClose} style={closeBtn} aria-label="Close">×</button>
+            </div>
           </div>
-          <input style={titleInput} value={d.company} onChange={(e) => setD({ ...d, company: e.target.value })}
-            onBlur={(e) => patch({ company: e.target.value })} />
-          <input style={subInput} value={d.name} placeholder="Deal name"
-            onChange={(e) => setD({ ...d, name: e.target.value })} onBlur={(e) => patch({ name: e.target.value })} />
-          <div className="num" style={{ fontSize: 20, marginTop: 8 }}>
-            {money(t.setup)} <span style={{ color: 'var(--ink-soft)', fontSize: 14 }}>+ {money(t.monthly)}/mo · {money(t.acv)} first-year</span>
+          <input style={titleInput} value={d.company} onChange={(e) => setD({ ...d, company: e.target.value })} onBlur={(e) => patch({ company: e.target.value })} />
+          <input style={subInput} value={d.name} placeholder="Deal name" onChange={(e) => setD({ ...d, name: e.target.value })} onBlur={(e) => patch({ name: e.target.value })} />
+          <div className="num" style={{ fontSize: 27, fontWeight: 700, marginTop: 6 }}>
+            {money(t.setup)} <span style={{ color: 'var(--ink-soft)', fontSize: 15, fontWeight: 400 }}>+ {money(t.monthly)}/mo · {money(t.acv)} first-year</span>
+          </div>
+
+          {/* Connected stage stepper */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 18 }}>
+            {STAGES.map((s, i) => {
+              const done = i < curIdx, active = i === curIdx
+              const fill = done ? '#3A3A42' : active ? s.color : 'var(--line)'
+              return (
+                <button key={s.id} onClick={() => patch({ stage: s.id as Stage })} style={{ flex: 1, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  <div style={{ height: 6, borderRadius: 4, background: fill }} />
+                  <div style={{ fontSize: 12, marginTop: 7, color: active ? s.color : 'var(--ink-muted)', fontWeight: active ? 600 : 500 }}>{s.name}</div>
+                </button>
+              )
+            })}
           </div>
         </div>
 
-        <div style={{ padding: 20, display: 'grid', gap: 22 }}>
-          {/* Stage stepper */}
-          <div>
-            <div style={label}>Stage</div>
-            <div style={{ display: 'flex', gap: 4 }}>
-              {STAGES.map((s) => {
-                const active = s.id === d.stage
-                return (
-                  <button key={s.id} onClick={() => patch({ stage: s.id as Stage })}
-                    style={{
-                      flex: 1, padding: '7px 4px', fontSize: 11.5, fontWeight: 600, borderRadius: 7,
-                      border: '1px solid ' + (active ? s.color : 'var(--line)'),
-                      background: active ? s.color + '18' : 'var(--panel)',
-                      color: active ? s.color : 'var(--ink-soft)', cursor: 'pointer',
-                    }}>
-                    {s.name}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Contact / source */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {miniField('Contact', d.contact, (v) => setD({ ...d, contact: v }), (v) => patch({ contact: v }))}
-            {miniField('Email', d.email, (v) => setD({ ...d, email: v }), (v) => patch({ email: v }))}
-            {miniField('Phone', d.phone ?? '', (v) => setD({ ...d, phone: v }), (v) => patch({ phone: v }))}
-            {miniField('Source', d.source, (v) => setD({ ...d, source: v }), (v) => patch({ source: v }))}
-          </div>
-
-          {/* Package stack + plan editor */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={label}>Package stack</div>
-              <button onClick={() => setEditPlan(!editPlan)} style={linkBtn}>{editPlan ? 'Done' : 'Edit plan'}</button>
-            </div>
-
-            {!editPlan ? (
-              <div style={{ ...planCard, borderColor: color + '55', background: color + '0D' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <b>{p.name} <span style={{ color: 'var(--ink-soft)', fontWeight: 400 }}>· {p.tier}</span></b>
-                  <span className="num">{money(p.setup)} · {money(p.monthly)}/mo</span>
+        {/* Two-column body */}
+        <div style={body}>
+          {/* LEFT */}
+          <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
+            <Card label="Client details" action={<button style={editBtn} onClick={() => setEditContact(!editContact)}>✎ {editContact ? 'Done' : 'Edit'}</button>}>
+              {!editContact ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  <Field k="Contact"><b>{d.contact || '—'}</b><div style={muted}>{d.email || 'no email'}</div></Field>
+                  <Field k="Source"><b>{d.source || '—'}</b><div style={muted}>Updated {timeAgo(d.updated_at)}</div></Field>
                 </div>
-                <p style={{ color: 'var(--ink-soft)', fontSize: 13, margin: '6px 0 0' }}>{p.blurb}</p>
-                {d.addons.length > 0 && (
-                  <div style={{ marginTop: 10, display: 'grid', gap: 4 }}>
-                    {d.addons.map((id) => {
-                      const a = ADDONS.find((x) => x.id === id)!
-                      return (
-                        <div key={id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                          <span>+ {a.name}</span>
-                          <span className="num" style={{ color: 'var(--ink-soft)' }}>{money(a.price)}{a.monthly ? ` · ${money(a.monthly)}/mo` : ''}</span>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  {mini('Contact', d.contact, (v) => setD({ ...d, contact: v }), (v) => patch({ contact: v }))}
+                  {mini('Email', d.email, (v) => setD({ ...d, email: v }), (v) => patch({ email: v }))}
+                  {mini('Phone', d.phone ?? '', (v) => setD({ ...d, phone: v }), (v) => patch({ phone: v }))}
+                  {mini('Source', d.source, (v) => setD({ ...d, source: v }), (v) => patch({ source: v }))}
+                </div>
+              )}
+            </Card>
+
+            <Card label="Package stack" action={<button style={editBtn} onClick={() => setEditPlan(!editPlan)}>✎ {editPlan ? 'Done' : 'Edit plan'}</button>}>
+              {!editPlan ? (
+                <>
+                  <div style={{ ...pkgCard, borderColor: color + '55', background: color + '0D' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <b style={{ fontSize: 15 }}>{p.name} <span style={{ ...tierChip, background: color + '22', color }}>{p.tier}</span></b>
+                      <span className="num" style={{ fontWeight: 600 }}>{money(p.setup)} + {money(p.monthly)}/mo</span>
+                    </div>
+                    <p style={{ color: 'var(--ink-soft)', fontSize: 13, margin: '8px 0 12px' }}>{p.blurb}</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      {p.features.map((f) => (
+                        <div key={f} style={{ display: 'flex', gap: 7, fontSize: 13 }}>
+                          <span style={{ color }}>●</span>{f}
                         </div>
+                      ))}
+                    </div>
+                  </div>
+                  {d.addons.map((id) => {
+                    const a = ADDONS.find((x) => x.id === id)!
+                    return (
+                      <div key={id} style={addonRow}>
+                        <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--accent-light)', display: 'grid', placeItems: 'center', color: 'var(--accent)', fontSize: 12 }}>▪</span>
+                        <span style={{ flex: 1, fontSize: 14 }}>{a.name}</span>
+                        <span className="num" style={{ color: 'var(--ink-soft)' }}>{money(a.price)}{a.monthly ? ` · ${money(a.monthly)}/mo` : ''}</span>
+                      </div>
+                    )
+                  })}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, marginTop: 4, borderTop: '1px solid var(--line)' }}>
+                    <b style={{ color: 'var(--ink-soft)', fontWeight: 500 }}>Estimated total</b>
+                    <b className="num">{money(t.setup)} <span style={{ color: 'var(--ink-soft)', fontWeight: 400 }}>+ {money(t.monthly)}/mo</span></b>
+                  </div>
+                </>
+              ) : (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                    {PACKAGES.map((pp) => {
+                      const on = pp.id === d.package_id
+                      return (
+                        <button key={pp.id} onClick={() => patch({ package_id: pp.id as PackageId })} style={{ padding: 10, borderRadius: 10, textAlign: 'left', cursor: 'pointer', border: '1px solid ' + (on ? PACKAGE_COLOR[pp.id] : 'var(--line)'), background: on ? PACKAGE_COLOR[pp.id] + '12' : 'var(--panel)' }}>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{pp.name}</div>
+                          <div className="num" style={{ fontSize: 12, color: 'var(--ink-soft)' }}>{money(pp.setup)}</div>
+                        </button>
                       )
                     })}
                   </div>
-                )}
-                <div style={{ borderTop: '1px solid var(--line)', marginTop: 10, paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                  <span>Estimated total</span>
-                  <span className="num">{money(t.setup)} · {money(t.monthly)}/mo</span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {ADDONS.map((a) => {
+                      const on = d.addons.includes(a.id)
+                      return (
+                        <button key={a.id} onClick={() => toggleAddon(a.id)} style={{ padding: '5px 10px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer', border: '1px solid ' + (on ? 'var(--accent)' : 'var(--line)'), background: on ? 'var(--accent-light)' : 'var(--panel)', color: on ? 'var(--accent-hover)' : 'var(--ink-soft)' }}>
+                          {on ? '✓ ' : '+ '}{a.name}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                  {PACKAGES.map((pp) => {
-                    const on = pp.id === d.package_id
-                    return (
-                      <button key={pp.id} onClick={() => patch({ package_id: pp.id as PackageId })}
-                        style={{
-                          padding: 10, borderRadius: 10, textAlign: 'left', cursor: 'pointer',
-                          border: '1px solid ' + (on ? PACKAGE_COLOR[pp.id] : 'var(--line)'),
-                          background: on ? PACKAGE_COLOR[pp.id] + '12' : 'var(--panel)',
-                        }}>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{pp.name}</div>
-                        <div className="num" style={{ fontSize: 12, color: 'var(--ink-soft)' }}>{money(pp.setup)}</div>
-                      </button>
-                    )
-                  })}
+              )}
+            </Card>
+
+            {brief && (
+              <Card label="Project brief" action={<span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>from intake form</span>}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  {brief.website !== undefined && <Field k="Website"><b>{brief.website || '—'}</b></Field>}
+                  {brief.social && <Field k="Social"><b>{brief.social}</b></Field>}
+                  {brief.industry && <Field k="Industry"><b>{brief.industry}</b></Field>}
+                  {brief.timeline && <Field k="Target launch"><b>{brief.timeline}</b></Field>}
+                  {brief.pages?.length ? <Field k="Pages"><b>{brief.pages.join(', ')}</b></Field> : null}
+                  {brief.tones?.length ? <Field k="Tone"><b>{brief.tones.join(', ')}</b></Field> : null}
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {ADDONS.map((a) => {
-                    const on = d.addons.includes(a.id)
-                    return (
-                      <button key={a.id} onClick={() => toggleAddon(a.id)}
-                        style={{
-                          padding: '5px 10px', borderRadius: 20, fontSize: 12.5, cursor: 'pointer',
-                          border: '1px solid ' + (on ? 'var(--accent)' : 'var(--line)'),
-                          background: on ? 'var(--accent-light)' : 'var(--panel)',
-                          color: on ? 'var(--accent-hover)' : 'var(--ink-soft)',
-                        }}>
-                        {on ? '✓ ' : '+ '}{a.name}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
+                {brief.colors?.length ? (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={fieldLabel}>Brand colors</div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 5 }}>
+                      {brief.colors.map((c) => <span key={c} style={{ width: 20, height: 20, borderRadius: 5, background: c, border: '1px solid var(--line)' }} />)}
+                    </div>
+                  </div>
+                ) : null}
+              </Card>
             )}
           </div>
 
-          {/* Project brief */}
-          {brief && (
-            <div>
-              <div style={label}>Project brief</div>
-              <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
-                {brief.industry && briefRow('Industry', brief.industry)}
-                {brief.website && briefRow('Website', brief.website)}
-                {brief.timeline && briefRow('Launch', brief.timeline)}
-                {brief.pages?.length ? briefRow('Pages', brief.pages.join(', ')) : null}
-                {brief.tones?.length ? briefRow('Tone', brief.tones.join(', ')) : null}
-                {brief.colors?.length ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ color: 'var(--ink-soft)', width: 80 }}>Colors</span>
-                    <span style={{ display: 'flex', gap: 4 }}>
-                      {brief.colors.map((c) => <span key={c} style={{ width: 16, height: 16, borderRadius: 4, background: c, border: '1px solid var(--line)' }} />)}
-                    </span>
+          {/* RIGHT */}
+          <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
+            <Card label="Notes & activity" action={<span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{comments.length} note{comments.length === 1 ? '' : 's'}</span>}>
+              <div style={{ display: 'grid', gap: 14, marginBottom: 14 }}>
+                {comments.map((c) => (
+                  <div key={c.id} style={{ display: 'flex', gap: 10 }}>
+                    <span style={avatar}>{c.initials}</span>
+                    <div>
+                      <div style={{ fontSize: 13 }}><b>{c.author}</b> <span style={{ color: 'var(--ink-muted)' }}>· {new Date(c.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })} · {new Date(c.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>
+                      <div style={{ fontSize: 14, marginTop: 2 }}>{c.text}</div>
+                    </div>
                   </div>
-                ) : null}
+                ))}
+                {comments.length === 0 && <div style={{ color: 'var(--ink-muted)', fontSize: 13 }}>No notes yet.</div>}
               </div>
-            </div>
-          )}
-
-          {/* Website preview (AI generate / upload / URL) */}
-          <PreviewSection deal={d} />
-
-          {/* Notes & activity */}
-          <div>
-            <div style={label}>Notes &amp; activity</div>
-            <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
-              {comments.map((c) => (
-                <div key={c.id} style={{ display: 'flex', gap: 10 }}>
-                  <span style={commentAvatar}>{c.initials}</span>
-                  <div>
-                    <div style={{ fontSize: 12.5 }}><b>{c.author}</b> <span style={{ color: 'var(--ink-muted)' }}>· {new Date(c.created_at).toLocaleDateString()}</span></div>
-                    <div style={{ fontSize: 13.5 }}>{c.text}</div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <span style={avatar}>{(profile?.name || 'U').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
+                <div style={{ flex: 1 }}>
+                  <textarea value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') post() }} placeholder="Write a note…" style={composer} rows={2} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>⌘ + Enter to post</span>
+                    <button onClick={post} style={postBtn}>Post</button>
                   </div>
                 </div>
-              ))}
-              {comments.length === 0 && <div style={{ color: 'var(--ink-muted)', fontSize: 13 }}>No notes yet.</div>}
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input value={draft} onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') post() }}
-                placeholder="Add a note… (⌘+Enter)" style={{ ...miniInput, flex: 1 }} />
-              <button onClick={post} style={postBtn}>Post</button>
-            </div>
+              </div>
+            </Card>
+
+            <Card label="Free preview" accent>
+              <PreviewSection deal={d} />
+            </Card>
           </div>
         </div>
       </aside>
@@ -230,53 +221,54 @@ export default function DealDetail({ deal, onClose, onChange }: {
   )
 }
 
-function miniField(labelText: string, value: string, onInput: (v: string) => void, onSave: (v: string) => void) {
+function Card({ label, action, accent, children }: { label: string; action?: ReactNode; accent?: boolean; children: ReactNode }) {
+  return (
+    <section style={{ background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 14, padding: 18, ...(accent ? { background: 'var(--accent-light-2)', borderColor: '#DBD3FF' } : {}) }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <span style={cardLabel}>{label}</span>
+        {action}
+      </div>
+      {children}
+    </section>
+  )
+}
+function Field({ k, children }: { k: string; children: ReactNode }) {
+  return <div><div style={fieldLabel}>{k}</div><div style={{ marginTop: 3, fontSize: 14 }}>{children}</div></div>
+}
+function mini(labelText: string, value: string, onInput: (v: string) => void, onSave: (v: string) => void) {
   return (
     <label style={{ display: 'grid', gap: 3 }}>
-      <span style={{ fontSize: 11.5, color: 'var(--ink-soft)' }}>{labelText}</span>
+      <span style={fieldLabel}>{labelText}</span>
       <input style={miniInput} value={value} onChange={(e) => onInput(e.target.value)} onBlur={(e) => onSave(e.target.value)} />
     </label>
   )
 }
-function briefRow(k: string, v: string) {
-  return (
-    <div style={{ display: 'flex', gap: 8 }}>
-      <span style={{ color: 'var(--ink-soft)', width: 80, flexShrink: 0 }}>{k}</span>
-      <span>{v}</span>
-    </div>
-  )
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const d = Math.floor(diff / 86400000)
+  if (d > 0) return `${d}d ago`
+  const h = Math.floor(diff / 3600000)
+  if (h > 0) return `${h}h ago`
+  return 'just now'
 }
 
-const overlay: React.CSSProperties = {
-  position: 'fixed', inset: 0, background: 'rgba(20,20,25,0.35)', zIndex: 40, display: 'flex', justifyContent: 'flex-end',
-}
-const panel: React.CSSProperties = {
-  width: 580, maxWidth: '100%', background: 'var(--canvas)', height: '100%', overflowY: 'auto',
-  boxShadow: '-10px 0 40px rgba(0,0,0,0.18)', animation: 'none',
-}
-const header: React.CSSProperties = {
-  background: 'var(--panel)', borderBottom: '1px solid var(--line)', padding: 20,
-}
-const label: React.CSSProperties = {
-  fontSize: 11, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--ink-muted)', marginBottom: 8,
-}
-const stageChip: React.CSSProperties = { fontSize: 11.5, fontWeight: 600, padding: '2px 9px', borderRadius: 20 }
-const pkgBadge: React.CSSProperties = { fontSize: 11.5, fontWeight: 600, padding: '2px 9px', borderRadius: 7 }
-const titleInput: React.CSSProperties = {
-  fontFamily: 'Space Grotesk', fontSize: 22, fontWeight: 700, border: 'none', background: 'transparent',
-  width: '100%', padding: 0, outline: 'none',
-}
-const subInput: React.CSSProperties = {
-  fontSize: 14, color: 'var(--ink-soft)', border: 'none', background: 'transparent', width: '100%', padding: 0, outline: 'none',
-}
-const miniInput: React.CSSProperties = {
-  padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8, fontSize: 13.5, background: 'var(--panel)', width: '100%',
-}
-const planCard: React.CSSProperties = { border: '1px solid', borderRadius: 12, padding: 14, marginTop: 8 }
-const linkBtn: React.CSSProperties = { border: 'none', background: 'transparent', color: 'var(--accent)', fontWeight: 600, fontSize: 13, cursor: 'pointer' }
-const commentAvatar: React.CSSProperties = {
-  width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', color: '#fff',
-  display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0,
-}
-const postBtn: React.CSSProperties = { padding: '8px 14px', border: 'none', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontWeight: 600, cursor: 'pointer' }
-const closeBtn: React.CSSProperties = { border: 'none', background: 'transparent', fontSize: 22, cursor: 'pointer', color: 'var(--ink-soft)', lineHeight: 1 }
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(20,20,25,0.35)', zIndex: 40, display: 'flex', justifyContent: 'flex-end' }
+const panel: React.CSSProperties = { width: 'min(960px, 96vw)', background: 'var(--canvas)', height: '100%', overflowY: 'auto', boxShadow: '-10px 0 40px rgba(0,0,0,0.18)' }
+const header: React.CSSProperties = { background: 'var(--panel)', borderBottom: '1px solid var(--line)', padding: '22px 28px 20px' }
+const body: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0,1.15fr) minmax(0,1fr)', gap: 20, padding: 24 }
+const chip: React.CSSProperties = { fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20 }
+const titleInput: React.CSSProperties = { fontFamily: 'Space Grotesk', fontSize: 28, fontWeight: 700, border: 'none', background: 'transparent', width: '100%', padding: 0, margin: '12px 0 0', outline: 'none' }
+const subInput: React.CSSProperties = { fontSize: 15, color: 'var(--ink-soft)', border: 'none', background: 'transparent', width: '100%', padding: 0, outline: 'none' }
+const cardLabel: React.CSSProperties = { fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--ink-muted)', fontWeight: 600 }
+const fieldLabel: React.CSSProperties = { fontSize: 11, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--ink-muted)' }
+const muted: React.CSSProperties = { color: 'var(--ink-soft)', fontSize: 12.5, marginTop: 1 }
+const pkgCard: React.CSSProperties = { border: '1px solid', borderRadius: 12, padding: 14, marginBottom: 10 }
+const tierChip: React.CSSProperties = { fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 6, marginLeft: 4 }
+const addonRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '9px 2px', borderTop: '1px solid var(--line-3)' }
+const avatar: React.CSSProperties = { width: 30, height: 30, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0 }
+const composer: React.CSSProperties = { width: '100%', padding: '9px 11px', border: '1px solid var(--line)', borderRadius: 10, fontSize: 14, fontFamily: 'inherit', resize: 'vertical', background: '#fff' }
+const postBtn: React.CSSProperties = { padding: '7px 16px', border: 'none', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontWeight: 600, cursor: 'pointer' }
+const miniInput: React.CSSProperties = { padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8, fontSize: 13.5, background: '#fff', width: '100%' }
+const editBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: 8, padding: '5px 11px', fontSize: 12.5, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer' }
+const openInvoiceBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: 9, padding: '7px 13px', fontSize: 13, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer' }
+const closeBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', width: 34, height: 34, borderRadius: 9, fontSize: 20, cursor: 'pointer', color: 'var(--ink-soft)', lineHeight: 1 }
