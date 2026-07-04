@@ -1,11 +1,19 @@
 import { useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../auth/AuthProvider'
+import { pkg } from '../lib/catalog'
 import type { Deal } from '../lib/types'
+
+const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/preview`
+const slugify = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'preview'
+const rand = () => Math.random().toString(36).slice(2, 7)
 
 // The AI website preview + outside-build options, shown inside the deal detail.
 // Sources: generate with Claude (server-side Edge Function), upload an HTML file,
 // or paste a live URL. Publishing to the email-locked client portal comes next (Critical 2).
 export default function PreviewSection({ deal }: { deal: Deal }) {
+  const { profile } = useAuth()
   const [html, setHtml] = useState<string | null>(null)
   const [url, setUrl] = useState('')
   const [activeUrl, setActiveUrl] = useState<string | null>(null)
@@ -13,6 +21,51 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // Publish state
+  const [publishing, setPublishing] = useState(false)
+  const [slug, setSlug] = useState<string | null>(null)
+  const [live, setLive] = useState(true)
+  const [copied, setCopied] = useState(false)
+  const shareUrl = slug ? `${FN_BASE}?p=${slug}` : ''
+
+  async function publish() {
+    if (!profile?.org_id) { setErr('No workspace found.'); return }
+    if (html === null && !activeUrl) return
+    setPublishing(true); setErr(null)
+    try {
+      const s = `${slugify(deal.company)}-${rand()}`
+      if (html !== null) {
+        const { error: upErr } = await supabase.storage.from('previews')
+          .upload(`${s}.html`, new Blob([html], { type: 'text/html' }), { upsert: true, contentType: 'text/html' })
+        if (upErr) throw upErr
+      }
+      const p = pkg(deal.package_id)
+      const { error: insErr } = await supabase.from('previews').insert({
+        slug: s, org_id: profile.org_id, deal_id: deal.id, company: deal.company,
+        contact: deal.contact, client_email: deal.email,
+        package_name: p.name, tier_name: p.tier,
+        external_url: html === null ? activeUrl : null, status: 'review', active: true,
+      })
+      if (insErr) throw insErr
+      setSlug(s); setLive(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Publish failed. Did you run migration 003 and deploy the preview function?')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  async function toggleLive() {
+    if (!slug) return
+    const next = !live
+    setLive(next)
+    await supabase.from('previews').update({ active: next }).eq('slug', slug)
+  }
+
+  function copyLink() {
+    navigator.clipboard?.writeText(shareUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600) })
+  }
 
   async function generate() {
     setBusy(true); setErr(null); setActiveUrl(null)
@@ -96,9 +149,34 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
               sandbox="allow-scripts allow-same-origin"
             />
           </div>
-          <p style={{ color: 'var(--ink-muted)', fontSize: 12, marginTop: 8 }}>
-            Publishing this to the email-locked client portal (a shareable preview.sitestac.com link) is the next milestone.
-          </p>
+          {/* Publish → email-locked share link */}
+          {!slug ? (
+            <div style={{ marginTop: 12 }}>
+              <button onClick={publish} disabled={publishing} style={publishBtn}>
+                {publishing ? 'Publishing…' : 'Publish → get share link'}
+              </button>
+              <p style={{ color: 'var(--ink-muted)', fontSize: 12, marginTop: 8 }}>
+                Locks the preview to <b>{deal.email || 'the client email on this deal'}</b>. The viewer sees the site, not the code.
+              </p>
+            </div>
+          ) : (
+            <div style={sharePanel}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: live ? 'var(--green-2)' : 'var(--ink-muted)' }} />
+                <b style={{ fontSize: 13 }}>{live ? 'Live — email-locked' : 'Turned off'}</b>
+                <label style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={live} onChange={toggleLive} style={{ marginRight: 5 }} />
+                  Link active
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input readOnly value={shareUrl} style={{ ...urlInput, fontSize: 12.5 }} onFocus={(e) => e.target.select()} />
+                <button onClick={copyLink} style={ghostBtn}>{copied ? 'Copied!' : 'Copy'}</button>
+                <a href={shareUrl} target="_blank" rel="noreferrer" style={{ ...ghostBtn, textDecoration: 'none', display: 'grid', placeItems: 'center' }}>Open ↗</a>
+              </div>
+              {activeUrl && <p style={{ color: 'var(--amber)', fontSize: 12, marginTop: 8 }}>Heads-up: this is an external URL — the code lives on their server, so it isn't code-protected.</p>}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -121,3 +199,9 @@ const toggleBtn: React.CSSProperties = {
   color: 'var(--ink-soft)', fontSize: 12.5, cursor: 'pointer',
 }
 const toggleActive: React.CSSProperties = { background: 'var(--ink)', color: '#fff', borderColor: 'var(--ink)' }
+const publishBtn: React.CSSProperties = {
+  padding: '10px 16px', border: 'none', borderRadius: 9, background: 'var(--accent)', color: '#fff', fontWeight: 600, cursor: 'pointer',
+}
+const sharePanel: React.CSSProperties = {
+  marginTop: 12, padding: 14, background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 12,
+}
