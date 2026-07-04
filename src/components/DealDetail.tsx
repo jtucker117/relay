@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
 import { PACKAGES, ADDONS, STAGES, PACKAGE_COLOR, pkg, stage as stageDef } from '../lib/catalog'
 import { dealTotals, money } from '../lib/money'
+import PreviewSection from './PreviewSection'
 import type { Comment, Deal, PackageId, Stage } from '../lib/types'
 
 // Right slide-over: edit a deal end-to-end. Stage stepper, contact, package/add-on
@@ -197,6 +198,9 @@ export default function DealDetail({ deal, onClose, onChange }: {
               </div>
             </div>
           )}
+
+          {/* Website preview (AI generate / upload / URL) */}
+          <PreviewSection deal={d} />
 
           {/* Notes & activity */}
           <div>
