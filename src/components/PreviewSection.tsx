@@ -67,6 +67,16 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
     navigator.clipboard?.writeText(shareUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600) })
   }
 
+  function download() {
+    if (html === null) return
+    const blob = new Blob([html], { type: 'text/html' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${slugify(deal.company)}-preview.html`
+    document.body.appendChild(a); a.click(); a.remove()
+    URL.revokeObjectURL(a.href)
+  }
+
   async function generate() {
     setBusy(true); setErr(null); setActiveUrl(null)
     try {
@@ -133,13 +143,16 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
 
       {hasPreview && (
         <>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
             {(['desktop', 'mobile'] as const).map((d) => (
               <button key={d} onClick={() => setDevice(d)}
                 style={{ ...toggleBtn, ...(device === d ? toggleActive : {}) }}>
                 {d === 'desktop' ? 'Desktop' : 'Mobile'}
               </button>
             ))}
+            {html !== null && (
+              <button onClick={download} style={{ ...toggleBtn, marginLeft: 'auto' }}>⬇ Export HTML</button>
+            )}
           </div>
           <div style={{ display: 'grid', placeItems: 'center', background: 'var(--rail)', border: '1px solid var(--line)', borderRadius: 12, padding: device === 'mobile' ? 12 : 0, overflow: 'hidden' }}>
             <iframe
