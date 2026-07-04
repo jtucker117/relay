@@ -1,9 +1,9 @@
-// Supabase Edge Function: preview  (PUBLIC — deploy with "Verify JWT" OFF)
+// Supabase Edge Function: preview  (PUBLIC - deploy with "Verify JWT" OFF)
 // The email-locked client portal. Serves a published preview at:
 //   https://<project>.supabase.co/functions/v1/preview?p=<slug>
 //
-// Protection model (best-effort — browser-rendered code is never 100% hidden):
-//   - Email gate: viewer must enter the client's email → sets a signed cookie.
+// Protection model (best-effort - browser-rendered code is never 100% hidden):
+//   - Email gate: viewer must enter the client's email -> sets a signed cookie.
 //   - The site HTML is served only through this function with a valid cookie,
 //     never as a public file URL. Framing locked to same-origin.
 //   - Server-enforced kill switch (active) + expiry.
@@ -21,6 +21,14 @@ const supa = createClient(SUPABASE_URL, SERVICE_ROLE);
 const enc = new TextEncoder();
 const esc = (s: string) => (s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+
+// Always respond as UTF-8 HTML. Use an explicit Headers object so the runtime
+// never falls back to text/plain (which shows the markup as raw text).
+function html(body: string, extra: Record<string, string> = {}): Response {
+  const h = new Headers({ "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  for (const [k, v] of Object.entries(extra)) h.set(k, v);
+  return new Response(body, { headers: h });
+}
 
 async function sign(data: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", enc.encode(SERVICE_ROLE),
@@ -57,8 +65,8 @@ if((e.ctrlKey||e.metaKey)&&['s','u','p'].includes(k))e.preventDefault();
 if(k==='f12')e.preventDefault();});
 </script>`;
 
-const page = (title: string, body: string) => new Response(
-  `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+const shell = (title: string, body: string) => html(
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><style>
 :root{--indigo:#5B4FE9}*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#F1F0EC;color:#1A1A1E}
 .wrap{max-width:440px;margin:12vh auto;padding:32px;background:#fff;border:1px solid #E4E3DE;border-radius:16px}
@@ -66,26 +74,22 @@ h1{font-size:20px;margin:0 0 8px}p{color:#5C5C63}
 input{width:100%;padding:11px 12px;border:1px solid #E4E3DE;border-radius:10px;font-size:15px;margin:12px 0}
 button{width:100%;padding:12px;border:none;border-radius:10px;background:var(--indigo);color:#fff;font-weight:600;font-size:15px;cursor:pointer}
 .err{color:#c33;font-size:14px}
-</style></head><body>${body}</body></html>`,
-  { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
-);
+</style></head><body>${body}</body></html>`);
 
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const slug = url.searchParams.get("p") ?? "";
-  if (!slug) return page("Not found", `<div class="wrap"><h1>Preview not found</h1></div>`);
+  if (!slug) return shell("Not found", `<div class="wrap"><h1>Preview not found</h1></div>`);
 
-  // Load the record (service role bypasses RLS).
   const { data: rec } = await supa.from("previews").select("*").eq("slug", slug).maybeSingle();
-  if (!rec) return page("Not available", `<div class="wrap"><h1>This preview isn't available.</h1></div>`);
-  if (!rec.active) return page("Closed", `<div class="wrap"><h1>This preview is no longer available.</h1><p>Reach out to your project contact for an updated link.</p></div>`);
+  if (!rec) return shell("Not available", `<div class="wrap"><h1>This preview isn't available.</h1></div>`);
+  if (!rec.active) return shell("Closed", `<div class="wrap"><h1>This preview is no longer available.</h1><p>Reach out to your project contact for an updated link.</p></div>`);
   if (rec.expiry && new Date(rec.expiry) < new Date())
-    return page("Expired", `<div class="wrap"><h1>This preview link has expired.</h1></div>`);
+    return shell("Expired", `<div class="wrap"><h1>This preview link has expired.</h1></div>`);
 
   const cookieName = `pv_${slug}`;
   const email = (rec.client_email ?? "").trim();
 
-  // Email gate submission.
   if (req.method === "POST") {
     const form = await req.formData();
     if (form.get("_action") === "decide") {
@@ -104,34 +108,24 @@ Deno.serve(async (req: Request) => {
         },
       });
     }
-    return page("Enter your email", gateHtml(slug, esc(rec.company), true));
+    return shell("Enter your email", gateHtml(slug, esc(rec.company), true));
   }
 
-  // Auth check.
   const unlocked = !email || (await cookieValid(readCookie(req, cookieName), slug, email));
-  if (!unlocked) return page("Enter your email", gateHtml(slug, esc(rec.company), false));
+  if (!unlocked) return shell("Enter your email", gateHtml(slug, esc(rec.company), false));
 
   // Raw site (framed by the portal only).
   if (url.searchParams.get("raw") === "1") {
     if (rec.external_url) return new Response(null, { status: 302, headers: { Location: rec.external_url } });
     const { data: file } = await supa.storage.from("previews").download(`${slug}.html`);
-    if (!file) return page("Missing", `<div class="wrap"><h1>Preview content missing.</h1></div>`);
-    let html = await file.text();
-    html = html.includes("</body>") ? html.replace("</body>", `${DETERRENT}</body>`) : html + DETERRENT;
-    return new Response(html, {
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-store",
-        "X-Frame-Options": "SAMEORIGIN",
-        "Content-Security-Policy": "frame-ancestors 'self'",
-      },
-    });
+    if (!file) return shell("Missing", `<div class="wrap"><h1>Preview content missing.</h1></div>`);
+    let site = await file.text();
+    site = site.includes("</body>") ? site.replace("</body>", `${DETERRENT}</body>`) : site + DETERRENT;
+    return html(site, { "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'" });
   }
 
-  // Portal shell: top bar + framed site + approve/request-changes.
   const statusLabel = rec.status === "approved" ? "Approved" : rec.status === "changes" ? "Changes requested" : "In review";
-  return new Response(portalHtml(slug, esc(rec.company), statusLabel, rec.external_url ? "" : ""),
-    { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  return html(portalHtml(slug, esc(rec.company), statusLabel));
 });
 
 function gateHtml(slug: string, company: string, err: boolean) {
@@ -146,9 +140,9 @@ function gateHtml(slug: string, company: string, err: boolean) {
   </div>`;
 }
 
-function portalHtml(slug: string, company: string, statusLabel: string, _x: string) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Preview — ${company}</title><style>
+function portalHtml(slug: string, company: string, statusLabel: string) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Preview for ${company}</title><style>
 *{box-sizing:border-box}html,body{margin:0;height:100%}body{font-family:system-ui,-apple-system,sans-serif;background:#161619;display:flex;flex-direction:column}
 .bar{display:flex;align-items:center;gap:12px;padding:10px 16px;color:#fff;background:#161619;border-bottom:1px solid #26262C}
 .bar b{font-size:14px}.chip{font-size:12px;background:#26262C;color:#cfcfe0;padding:3px 9px;border-radius:20px}
