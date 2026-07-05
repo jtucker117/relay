@@ -6,8 +6,8 @@
 // Deploy:  supabase functions deploy generate-preview
 // Secret:  supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 // (or create it in the Supabase dashboard → Edge Functions and paste this code)
-
-import Anthropic from "npm:@anthropic-ai/sdk";
+//
+// Uses a plain fetch to the Anthropic API (no SDK) for maximum Deno reliability.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -90,20 +90,31 @@ Deno.serve(async (req: Request) => {
     const { company, packageId, brief } = await req.json();
     if (!company) throw new Error("Missing company.");
 
-    const anthropic = new Anthropic({ apiKey });
     const prompt = buildPrompt(company, packageId ?? "one", brief ?? {});
 
-    // Stream so a large (up to 128K) HTML response doesn't hit an HTTP timeout.
-    const stream = anthropic.messages.stream({
-      model: "claude-opus-4-8",
-      max_tokens: 32000,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "high" },
-      messages: [{ role: "user", content: prompt }],
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-opus-4-8",
+        max_tokens: 20000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "high" },
+        messages: [{ role: "user", content: prompt }],
+      }),
     });
-    const msg = await stream.finalMessage();
 
-    let html = msg.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || `Anthropic API ${res.status}`);
+    if (data?.stop_reason === "refusal") throw new Error("The model declined this request. Try adjusting the brief.");
+
+    let html = (data.content ?? [])
+      .filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text).join("");
     // Strip accidental code fences and any preamble before <!doctype/<html.
     html = html.replace(/^```html?\s*/i, "").replace(/```\s*$/i, "").trim();
     const start = html.search(/<!doctype html|<html/i);
