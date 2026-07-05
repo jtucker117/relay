@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { PACKAGES, ADDONS, STAGES, PACKAGE_COLOR, pkg, stage as stageDef } from '../lib/catalog'
 import { dealTotals, money } from '../lib/money'
 import PreviewSection from './PreviewSection'
+import InvoiceModal from './InvoiceModal'
 import type { Comment, Deal, PackageId, Stage } from '../lib/types'
 
 // High-fidelity deal detail — two-column slide-over matching the Relay prototype.
@@ -14,6 +15,7 @@ export default function DealDetail({ deal, onClose, onChange }: {
   const [d, setD] = useState<Deal>(deal)
   const [editPlan, setEditPlan] = useState(false)
   const [editContact, setEditContact] = useState(false)
+  const [showInvoice, setShowInvoice] = useState(false)
   const [comments, setComments] = useState<Comment[]>([])
   const [draft, setDraft] = useState('')
 
@@ -51,6 +53,7 @@ export default function DealDetail({ deal, onClose, onChange }: {
 
   return (
     <div style={overlay} onClick={onClose}>
+      {showInvoice && <InvoiceModal deal={d} onClose={() => setShowInvoice(false)} onChange={onChange} />}
       <aside style={panel} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div style={header}>
@@ -58,7 +61,7 @@ export default function DealDetail({ deal, onClose, onChange }: {
             <span style={{ ...chip, background: stageDef(d.stage).color + '22', color: stageDef(d.stage).color }}>{stageDef(d.stage).name}</span>
             <span style={{ ...chip, background: color + '1F', color }}>{p.name}</span>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-              <button style={openInvoiceBtn} title="Invoicing is the next build">🧾 Open invoice</button>
+              <button style={openInvoiceBtn} onClick={() => setShowInvoice(true)}>🧾 Open invoice</button>
               <button onClick={onClose} style={closeBtn} aria-label="Close">×</button>
             </div>
           </div>
