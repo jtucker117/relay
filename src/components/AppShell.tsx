@@ -6,6 +6,7 @@ import Icon from './Icon'
 
 const NAV = [
   { to: '/', label: 'Pipeline', icon: 'pipeline', end: true },
+  { to: '/leads', label: 'Leads', icon: 'leads' },
   { to: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
   { to: '/activities', label: 'Activities', icon: 'activities', badge: 'activities' },
   { to: '/build', label: 'Build Queue', icon: 'build' },

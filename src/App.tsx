@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import AppShell from './components/AppShell'
 import Pipeline from './pages/Pipeline'
+import Leads from './pages/Leads'
 import Dashboard from './pages/Dashboard'
 import Activities from './pages/Activities'
 import BuildQueue from './pages/BuildQueue'
@@ -47,6 +48,7 @@ export default function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<Pipeline />} />
+        <Route path="leads" element={<Leads />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="activities" element={<Activities />} />
         <Route path="build" element={<BuildQueue />} />

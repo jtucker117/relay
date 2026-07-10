@@ -4,6 +4,32 @@ export type Role = 'Owner' | 'Admin' | 'Salesperson' | 'Builder'
 export type Stage = 'lead' | 'qualified' | 'proposal' | 'negotiation' | 'won'
 export type PackageId = 'one' | 'three' | 'multi'
 
+// Outreach lead pool (shared team prospecting board — see supabase/004_leads.sql).
+export type LeadStatus = 'new' | 'contacted' | 'followup' | 'interested' | 'won' | 'lost' | 'unfit'
+export type LeadSource = 'places' | 'manual' | 'live'
+
+export interface Lead {
+  id: string
+  place_id: string | null
+  name: string
+  category: string | null
+  area: string | null
+  phone: string | null
+  address: string | null
+  zip: string | null
+  rating: number | null
+  reviews: number | null
+  web_status: 'confirmed' | 'likely' | 'maybe'
+  lat: number | null
+  lng: number | null
+  source: LeadSource
+  status: LeadStatus
+  contacted_on: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Profile {
   user_id: string
   org_id: string | null
