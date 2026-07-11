@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import * as L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { Loader } from '@googlemaps/js-api-loader'
 import Screen from '../components/Screen'
 import Icon from '../components/Icon'
 import { supabase } from '../lib/supabase'
@@ -244,56 +243,83 @@ export default function Leads() {
   )
 }
 
-// ---- Real map: OpenStreetMap tiles + status-colored clickable pins (Leaflet, no API key) ----
+// ---- Real map: Google Maps with status-colored, clickable pins ----
+type MapState = 'loading' | 'ready' | 'nokey' | 'error'
 function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }) {
   const el = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<L.Map | null>(null)
-  const layerRef = useRef<L.LayerGroup | null>(null)
+  const mapRef = useRef<google.maps.Map | null>(null)
+  const markersRef = useRef<google.maps.Marker[]>([])
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick // always call the latest handler without re-running effects
+  const [state, setState] = useState<MapState>('loading')
 
   const pts = leads.filter((l) => l.lat != null && l.lng != null)
 
-  // Initialize the map once.
+  // Load the Google Maps SDK and create the map once.
   useEffect(() => {
-    if (!el.current || mapRef.current) return
-    const map = L.map(el.current, { scrollWheelZoom: false, zoomControl: true })
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map)
-    layerRef.current = L.layerGroup().addTo(map)
-    map.setView([30.19, -95.62], 11) // Magnolia / Woodlands area
-    mapRef.current = map
-    return () => { map.remove(); mapRef.current = null; layerRef.current = null }
+    const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
+    if (!key) { setState('nokey'); return }
+    let cancelled = false
+    new Loader({ apiKey: key, version: 'weekly' })
+      .importLibrary('maps')
+      .then(() => {
+        if (cancelled || !el.current) return
+        mapRef.current = new google.maps.Map(el.current, {
+          center: { lat: 30.19, lng: -95.62 }, // Magnolia / Woodlands area
+          zoom: 11,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+        })
+        setState('ready')
+      })
+      .catch(() => { if (!cancelled) setState('error') })
+    return () => { cancelled = true }
   }, [])
 
   // Redraw pins whenever the filtered/sorted leads change.
   useEffect(() => {
-    const map = mapRef.current, lg = layerRef.current
-    if (!map || !lg) return
-    lg.clearLayers()
-    const coords: [number, number][] = []
+    const map = mapRef.current
+    if (state !== 'ready' || !map) return
+    markersRef.current.forEach((m) => m.setMap(null))
+    markersRef.current = []
+    const bounds = new google.maps.LatLngBounds()
     for (const p of pts) {
-      const m = statusMeta(p.status)
-      const marker = L.circleMarker([p.lat as number, p.lng as number], {
-        radius: 7, color: '#fff', weight: 1.5, fillColor: m.color, fillOpacity: 0.92,
+      const meta = statusMeta(p.status)
+      const position = { lat: p.lat as number, lng: p.lng as number }
+      const marker = new google.maps.Marker({
+        position, map, title: `${p.name} — ${meta.label}`,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE, scale: 7,
+          fillColor: meta.color, fillOpacity: 0.95, strokeColor: '#fff', strokeWeight: 1.5,
+        },
       })
-      marker.bindTooltip(`${p.name} — ${m.label}`, { direction: 'top' })
-      marker.on('click', () => onPickRef.current(p))
-      marker.addTo(lg)
-      coords.push([p.lat as number, p.lng as number])
+      marker.addListener('click', () => onPickRef.current(p))
+      markersRef.current.push(marker)
+      bounds.extend(position)
     }
-    if (coords.length) map.fitBounds(coords, { padding: [34, 34], maxZoom: 13 })
-    setTimeout(() => map.invalidateSize(), 0) // container just became visible/sized
+    if (pts.length) {
+      map.fitBounds(bounds, 40)
+      if (pts.length === 1) map.setZoom(13)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leads])
+  }, [leads, state])
 
-  if (!pts.length) return null
+  if (state === 'nokey' || state === 'error') {
+    return (
+      <div style={mapWrap}>
+        <div style={mapNotice}>
+          {state === 'nokey'
+            ? 'Map needs a Google Maps API key (VITE_GOOGLE_MAPS_API_KEY). The list below works without it.'
+            : "Couldn't load Google Maps — check the API key's referrer restrictions and that billing is enabled."}
+        </div>
+      </div>
+    )
+  }
   return (
     <div style={mapWrap}>
-      <div ref={el} style={{ height: 380, width: '100%' }} />
-      <div style={mappedBadge}>{pts.length} of {leads.length} mapped</div>
+      <div ref={el} style={{ height: 380, width: '100%', background: 'var(--rail)' }} />
+      {state === 'ready' && <div style={mappedBadge}>{pts.length} of {leads.length} mapped</div>}
     </div>
   )
 }
@@ -514,6 +540,10 @@ const mappedBadge: React.CSSProperties = {
   position: 'absolute', bottom: 10, right: 12, zIndex: 500, pointerEvents: 'none',
   fontSize: 11, fontWeight: 500, color: 'var(--ink-soft)', background: 'rgba(251,251,250,0.9)',
   border: '1px solid var(--line-2)', borderRadius: 7, padding: '2px 8px',
+}
+const mapNotice: React.CSSProperties = {
+  display: 'grid', placeItems: 'center', textAlign: 'center', height: 120, padding: 20,
+  color: 'var(--ink-soft)', fontSize: 13, background: 'var(--rail)',
 }
 const errorBox: React.CSSProperties = {
   background: 'var(--amber-bg)', border: '1px solid var(--amber-2)', color: 'var(--amber)',
