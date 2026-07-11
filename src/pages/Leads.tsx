@@ -38,7 +38,9 @@ export default function Leads() {
   const [err, setErr] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [area, setArea] = useState<string>('all')
-  const [status, setStatus] = useState<LeadStatus | 'all'>('all')
+  // Default to "New" so the board shows only leads you haven't reached out to yet;
+  // worked leads stay accessible via the status chips.
+  const [status, setStatus] = useState<LeadStatus | 'all'>('new')
   const [cat, setCat] = useState<string>('all')
   const [sort, setSort] = useState<SortKey>('reviews')
   const [open, setOpen] = useState<Lead | null>(null)
