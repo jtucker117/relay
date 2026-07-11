@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import * as L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import Screen from '../components/Screen'
 import Icon from '../components/Icon'
 import { supabase } from '../lib/supabase'
@@ -8,14 +10,15 @@ import type { Lead, LeadStatus } from '../lib/types'
 // Search • coordinate map • per-lead outreach stages • notes • CSV export • manual add.
 // Data lives in the `leads` table (supabase/004_leads.sql), shared across the team.
 
+// Concrete hex (not CSS vars) so Leaflet's SVG pins can use the same colors as the chips.
 const STATUS: { id: LeadStatus; label: string; color: string }[] = [
-  { id: 'new', label: 'New', color: 'var(--ink-muted)' },
-  { id: 'contacted', label: 'Contacted', color: 'var(--blue)' },
-  { id: 'followup', label: 'Follow-up', color: 'var(--purple)' },
-  { id: 'interested', label: 'Interested', color: 'var(--accent)' },
-  { id: 'won', label: 'Won', color: 'var(--green)' },
+  { id: 'new', label: 'New', color: '#8A8A90' },
+  { id: 'contacted', label: 'Contacted', color: '#2E9BD6' },
+  { id: 'followup', label: 'Follow-up', color: '#7C5CFF' },
+  { id: 'interested', label: 'Interested', color: '#5B4FE9' },
+  { id: 'won', label: 'Won', color: '#2C7A50' },
   { id: 'lost', label: 'Lost', color: '#C0392B' },
-  { id: 'unfit', label: 'Unfit', color: 'var(--ink-muted-2)' },
+  { id: 'unfit', label: 'Unfit', color: '#9A9AA0' },
 ]
 const statusMeta = (id: LeadStatus) => STATUS.find((s) => s.id === id) ?? STATUS[0]
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -241,36 +244,56 @@ export default function Leads() {
   )
 }
 
-// ---- Coordinate map (lightweight SVG scatter, no external map dep) ----
+// ---- Real map: OpenStreetMap tiles + status-colored clickable pins (Leaflet, no API key) ----
 function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }) {
-  const pts = leads.filter((l) => l.lat != null && l.lng != null)
-  if (pts.length < 2) return null
-  const W = 900, H = 340, pad = 26
-  const lats = pts.map((p) => p.lat as number)
-  const lngs = pts.map((p) => p.lng as number)
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats)
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs)
-  const spanLat = maxLat - minLat || 1, spanLng = maxLng - minLng || 1
-  const x = (lng: number) => pad + ((lng - minLng) / spanLng) * (W - 2 * pad)
-  const y = (lat: number) => H - pad - ((lat - minLat) / spanLat) * (H - 2 * pad) // north = up
+  const el = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<L.Map | null>(null)
+  const layerRef = useRef<L.LayerGroup | null>(null)
+  const onPickRef = useRef(onPick)
+  onPickRef.current = onPick // always call the latest handler without re-running effects
 
+  const pts = leads.filter((l) => l.lat != null && l.lng != null)
+
+  // Initialize the map once.
+  useEffect(() => {
+    if (!el.current || mapRef.current) return
+    const map = L.map(el.current, { scrollWheelZoom: false, zoomControl: true })
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(map)
+    layerRef.current = L.layerGroup().addTo(map)
+    map.setView([30.19, -95.62], 11) // Magnolia / Woodlands area
+    mapRef.current = map
+    return () => { map.remove(); mapRef.current = null; layerRef.current = null }
+  }, [])
+
+  // Redraw pins whenever the filtered/sorted leads change.
+  useEffect(() => {
+    const map = mapRef.current, lg = layerRef.current
+    if (!map || !lg) return
+    lg.clearLayers()
+    const coords: [number, number][] = []
+    for (const p of pts) {
+      const m = statusMeta(p.status)
+      const marker = L.circleMarker([p.lat as number, p.lng as number], {
+        radius: 7, color: '#fff', weight: 1.5, fillColor: m.color, fillOpacity: 0.92,
+      })
+      marker.bindTooltip(`${p.name} — ${m.label}`, { direction: 'top' })
+      marker.on('click', () => onPickRef.current(p))
+      marker.addTo(lg)
+      coords.push([p.lat as number, p.lng as number])
+    }
+    if (coords.length) map.fitBounds(coords, { padding: [34, 34], maxZoom: 13 })
+    setTimeout(() => map.invalidateSize(), 0) // container just became visible/sized
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads])
+
+  if (!pts.length) return null
   return (
     <div style={mapWrap}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', height: 'auto' }} preserveAspectRatio="xMidYMid meet">
-        {pts.map((p) => {
-          const m = statusMeta(p.status)
-          return (
-            <circle key={p.id} cx={x(p.lng as number)} cy={y(p.lat as number)} r={6}
-              fill={m.color} fillOpacity={0.85} stroke="#fff" strokeWidth={1.5}
-              style={{ cursor: 'pointer' }} onClick={() => onPick(p)}>
-              <title>{p.name} — {m.label}{p.area ? ` (${p.area})` : ''}</title>
-            </circle>
-          )
-        })}
-      </svg>
-      <div style={{ position: 'absolute', bottom: 8, right: 12, fontSize: 11, color: 'var(--ink-muted)' }}>
-        {pts.length} of {leads.length} mapped
-      </div>
+      <div ref={el} style={{ height: 380, width: '100%' }} />
+      <div style={mappedBadge}>{pts.length} of {leads.length} mapped</div>
     </div>
   )
 }
@@ -485,7 +508,12 @@ const metaChip: React.CSSProperties = {
 }
 const mapWrap: React.CSSProperties = {
   position: 'relative', background: 'var(--rail)', border: '1px solid var(--line-2)',
-  borderRadius: 14, padding: 8, marginBottom: 16, overflow: 'hidden',
+  borderRadius: 14, marginBottom: 16, overflow: 'hidden',
+}
+const mappedBadge: React.CSSProperties = {
+  position: 'absolute', bottom: 10, right: 12, zIndex: 500, pointerEvents: 'none',
+  fontSize: 11, fontWeight: 500, color: 'var(--ink-soft)', background: 'rgba(251,251,250,0.9)',
+  border: '1px solid var(--line-2)', borderRadius: 7, padding: '2px 8px',
 }
 const errorBox: React.CSSProperties = {
   background: 'var(--amber-bg)', border: '1px solid var(--amber-2)', color: 'var(--amber)',
