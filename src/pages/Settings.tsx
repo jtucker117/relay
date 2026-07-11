@@ -57,14 +57,14 @@ export default function Settings() {
             </div>
           </section>
 
-          <TeamSection orgId={orgId!} meId={profile!.user_id} myName={profile!.name} />
+          <TeamSection orgId={orgId!} meId={profile!.user_id} myName={profile!.name} orgName={s.name} />
         </div>
       )}
     </Screen>
   )
 }
 
-function TeamSection({ orgId, meId, myName }: { orgId: string; meId: string; myName: string }) {
+function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: string; myName: string; orgName: string }) {
   const [members, setMembers] = useState<Member[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
   const [name, setName] = useState('')
@@ -72,6 +72,7 @@ function TeamSection({ orgId, meId, myName }: { orgId: string; meId: string; myN
   const [role, setRole] = useState<Role>('Salesperson')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const [m, i] = await Promise.all([
@@ -98,16 +99,26 @@ function TeamSection({ orgId, meId, myName }: { orgId: string; meId: string; myN
   }
   async function sendInvite(e: React.FormEvent) {
     e.preventDefault()
-    setBusy(true); setErr(null)
+    setBusy(true); setErr(null); setNote(null)
+    const to = email.trim(), inviteName = name.trim(), inviteRole = role
     const { error } = await supabase.from('invites').insert({
-      org_id: orgId, email: email.trim(), name: name.trim(), role, invited_by: myName,
+      org_id: orgId, email: to, name: inviteName, role: inviteRole, invited_by: myName,
     })
-    setBusy(false)
     if (error) {
+      setBusy(false)
       setErr(error.code === '23505' ? 'That email is already invited.' : error.message)
       return
     }
+
+    // Best-effort invite email — the invite is valid either way.
+    const { error: mailErr } = await supabase.functions.invoke('send-invite', {
+      body: { email: to, name: inviteName, role: inviteRole, orgName, inviterName: myName, appUrl: window.location.origin },
+    })
+    setBusy(false)
     setName(''); setEmail(''); setRole('Salesperson')
+    setNote(mailErr
+      ? `Invite created, but the email didn't send (${mailErr.message}). Send them the signup link manually for now.`
+      : `Invite email sent to ${to}.`)
     load()
   }
 
@@ -169,9 +180,10 @@ function TeamSection({ orgId, meId, myName }: { orgId: string; meId: string; myN
         <button type="submit" disabled={busy} style={btn}>{busy ? '…' : 'Send invite'}</button>
       </form>
       {err && <p style={{ color: '#c33', fontSize: 13, marginTop: 8 }}>{err}</p>}
+      {note && <p style={{ color: note.startsWith('Invite email sent') ? 'var(--green)' : 'var(--amber)', fontSize: 13, marginTop: 8 }}>{note}</p>}
       <p style={{ color: 'var(--ink-muted)', fontSize: 12, marginTop: 8 }}>
-        The invited email joins this workspace with the chosen role the first time they sign up.
-        (Automatic invite emails arrive with Critical 3 — for now, send them the link yourself.)
+        We email the invitee a link to create their account. They join this workspace with the
+        chosen role automatically — as long as they sign up with the invited email address.
       </p>
     </section>
   )

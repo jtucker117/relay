@@ -1,10 +1,14 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
-// Email/password + magic-link sign-in (Critical 1). Roles/invites come later.
+// Email/password + magic-link sign-in (Critical 1).
+// An invite email links here as /login?email=<address>, so pre-fill signup with that address.
 export default function Login() {
-  const [mode, setMode] = useState<'signin' | 'signup' | 'magic'>('signin')
-  const [email, setEmail] = useState('')
+  const [params] = useSearchParams()
+  const invitedEmail = params.get('email') ?? ''
+  const [mode, setMode] = useState<'signin' | 'signup' | 'magic'>(invitedEmail ? 'signup' : 'signin')
+  const [email, setEmail] = useState(invitedEmail)
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -45,7 +49,9 @@ export default function Login() {
           <span style={chip}>CRM</span>
         </div>
         <p style={{ color: 'var(--ink-soft)', margin: '0 0 20px' }}>
-          {mode === 'signup' ? 'Create your account' : 'Sign in to your workspace'}
+          {invitedEmail && mode === 'signup'
+            ? "You've been invited — create your account to join."
+            : mode === 'signup' ? 'Create your account' : 'Sign in to your workspace'}
         </p>
 
         <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
