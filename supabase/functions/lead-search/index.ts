@@ -1,12 +1,17 @@
 // Supabase Edge Function: lead-search
-// Powers the Leads board's "🔍 Live search" button. Takes a plain-language query
-// (e.g. "roofers in Conroe"), uses Claude + the Anthropic web_search tool to find
-// real local businesses, and returns them in the `leads` table shape. Runs
-// server-side so the ANTHROPIC_API_KEY never touches the browser.
+// Powers the Leads board's "🔍 Live search". Takes a plain-language query
+// (e.g. "roofers in Conroe") and returns real local businesses in the `leads` shape.
+//
+// Primary engine: Google Places API (New) Text Search — accurate, structured data
+// (name, category, address, phone, rating, reviews, coords, website, city). Each
+// business is keyed by its Google place id, so records are unique and de-dupe against
+// the seeded pool automatically. If GOOGLE_PLACES_API_KEY isn't set, falls back to a
+// Claude web-search pass so the button still works.
 //
 // Deploy:  supabase functions deploy lead-search   (Verify JWT: ON)
-// Secret:  supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-// (or create it in the Supabase dashboard → Edge Functions and paste this code)
+// Secrets: supabase secrets set GOOGLE_PLACES_API_KEY=...   (a server key — NOT the
+//            referrer-restricted browser Maps key; enable "Places API (New)")
+//          supabase secrets set ANTHROPIC_API_KEY=sk-ant-...   (fallback only)
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -16,129 +21,146 @@ const cors = {
 
 const WEB_STATUS = new Set(["confirmed", "likely", "maybe"]);
 
-function slug(s: string): string {
-  return (s || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-    .slice(0, 48);
+interface Lead {
+  id: string; place_id: string | null; name: string; category: string | null;
+  area: string | null; phone: string | null; address: string | null; zip: string | null;
+  rating: number | null; reviews: number; web_status: string; website: string | null;
+  lat: number | null; lng: number | null; source: "live";
 }
 
-interface RawLead {
-  name?: string; category?: string; area?: string; phone?: string;
-  address?: string; zip?: string; rating?: number | null; reviews?: number | null;
-  web_status?: string; lat?: number | null; lng?: number | null;
+// A business with no site is the best prospect for a web agency; a social/builder page is weaker.
+function webStatus(website: string | null): string {
+  if (!website) return "confirmed";
+  const w = website.toLowerCase();
+  if (/facebook\.com|instagram\.com|linktr\.ee|yelp\.com|business\.site|wixsite\.com|godaddysites\.com/.test(w)) return "likely";
+  return "maybe";
 }
 
-// Coerce a model-returned object into a safe leads row (stable id for idempotent upsert).
-function normalize(r: RawLead) {
-  const name = String(r.name ?? "").trim();
-  if (!name) return null;
-  const zip = r.zip ? String(r.zip).trim() : null;
-  const area = r.area ? String(r.area).trim() : null;
-  const rating = typeof r.rating === "number" && isFinite(r.rating) ? r.rating : null;
-  const reviews = typeof r.reviews === "number" && isFinite(r.reviews) ? Math.round(r.reviews) : 0;
-  const web = WEB_STATUS.has(String(r.web_status)) ? String(r.web_status) : "maybe";
-  const lat = typeof r.lat === "number" && isFinite(r.lat) ? r.lat : null;
-  const lng = typeof r.lng === "number" && isFinite(r.lng) ? r.lng : null;
-  return {
-    id: `live-${slug(name)}-${zip ?? slug(area ?? "")}`,
-    place_id: null,
-    name,
-    category: r.category ? String(r.category).trim() : null,
-    area,
-    phone: r.phone ? String(r.phone).trim() : null,
-    address: r.address ? String(r.address).trim() : null,
-    zip,
-    rating,
-    reviews,
-    web_status: web,
-    lat,
-    lng,
-    source: "live",
-  };
+// ---- Google Places API (New): the good path ----
+interface PlaceComponent { types?: string[]; longText?: string; shortText?: string }
+function comp(components: PlaceComponent[] | undefined, type: string): string | null {
+  const c = (components ?? []).find((x) => (x.types ?? []).includes(type));
+  return c ? (c.shortText || c.longText || null) : null;
 }
 
-function buildPrompt(query: string): string {
-  return `Find real, currently-operating local businesses matching this request: "${query}".
+async function searchPlaces(key: string, query: string): Promise<Lead[]> {
+  const fieldMask = [
+    "places.id", "places.displayName", "places.formattedAddress", "places.nationalPhoneNumber",
+    "places.rating", "places.userRatingCount", "places.location", "places.websiteUri",
+    "places.businessStatus", "places.primaryTypeDisplayName", "places.addressComponents",
+    "nextPageToken",
+  ].join(",");
 
-Use web search (Google Maps / business listings / directories) to gather ACTUAL businesses — never invent them. Return up to 20.
+  const out: Lead[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 3; page++) { // up to 60 businesses
+    const body: Record<string, unknown> = { textQuery: query, maxResultCount: 20, regionCode: "US" };
+    if (pageToken) body.pageToken = pageToken;
 
-For each business provide:
-- name
-- category (short, e.g. "Roofing", "Taqueria", "Auto Repair")
-- area (the city/town, e.g. "Conroe", "Magnolia")
-- phone (as "###-###-####" if available, else null)
-- address (street address if available, else null)
-- zip (5-digit, else null)
-- rating (Google star rating as a number, else null)
-- reviews (review count as an integer, else 0)
-- lat and lng (decimal coordinates if you can determine them, else null)
-- web_status: your read on whether they lack a strong modern website (a good sales prospect):
-    "confirmed" = clearly no real website / only a Facebook page,
-    "likely" = weak or outdated site,
-    "maybe" = seems to already have a decent site.
+    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": key, "X-Goog-FieldMask": fieldMask },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || `Google Places ${res.status}`);
 
-Output ONLY a raw JSON array of objects with exactly those keys. No markdown, no code fences, no commentary before or after.`;
-}
-
-function extractJson(text: string): RawLead[] {
-  let t = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-  const start = t.indexOf("[");
-  const end = t.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) return [];
-  t = t.slice(start, end + 1);
-  try {
-    const parsed = JSON.parse(t);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+    for (const p of (data.places ?? [])) {
+      if (p.businessStatus && p.businessStatus !== "OPERATIONAL") continue;
+      const name = p.displayName?.text ?? "";
+      if (!name) continue;
+      const website = p.websiteUri || null;
+      out.push({
+        id: p.id,
+        place_id: p.id,
+        name,
+        category: p.primaryTypeDisplayName?.text ?? null,
+        area: comp(p.addressComponents, "locality") || comp(p.addressComponents, "postal_town") || null,
+        phone: p.nationalPhoneNumber || null,
+        address: p.formattedAddress || null,
+        zip: comp(p.addressComponents, "postal_code"),
+        rating: typeof p.rating === "number" ? p.rating : null,
+        reviews: typeof p.userRatingCount === "number" ? p.userRatingCount : 0,
+        web_status: webStatus(website),
+        website,
+        lat: p.location?.latitude ?? null,
+        lng: p.location?.longitude ?? null,
+        source: "live",
+      });
+    }
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
   }
+  return out;
+}
+
+// ---- Claude web-search fallback (used only when GOOGLE_PLACES_API_KEY is unset) ----
+function slug(s: string): string {
+  return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
+}
+async function searchClaude(apiKey: string, query: string): Promise<Lead[]> {
+  const prompt = `Find real, currently-operating local businesses matching: "${query}". Use web search — never invent. Return up to 20 as a raw JSON array; each object: name, category, area, phone ("###-###-####" or null), address, zip, rating (number|null), reviews (int), lat, lng, website (url|null). Output ONLY the JSON array, no prose or code fences.`;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-sonnet-5", max_tokens: 8000,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }],
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || `Anthropic API ${res.status}`);
+  const text = (data.content ?? []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("\n");
+  const start = text.indexOf("["), end = text.lastIndexOf("]");
+  if (start === -1 || end === -1) return [];
+  let raw: Record<string, unknown>[] = [];
+  try { raw = JSON.parse(text.slice(start, end + 1)); } catch { return []; }
+  return raw.map((r) => {
+    const name = String(r.name ?? "").trim();
+    if (!name) return null;
+    const zip = r.zip ? String(r.zip).trim() : null;
+    const area = r.area ? String(r.area).trim() : null;
+    const website = r.website ? String(r.website).trim() : null;
+    return {
+      id: `live-${slug(name)}-${zip ?? slug(area ?? "")}`,
+      place_id: null, name,
+      category: r.category ? String(r.category).trim() : null,
+      area, phone: r.phone ? String(r.phone).trim() : null,
+      address: r.address ? String(r.address).trim() : null, zip,
+      rating: typeof r.rating === "number" ? r.rating : null,
+      reviews: typeof r.reviews === "number" ? Math.round(r.reviews) : 0,
+      web_status: WEB_STATUS.has(String(r.web_status)) ? String(r.web_status) : webStatus(website),
+      website,
+      lat: typeof r.lat === "number" ? r.lat : null,
+      lng: typeof r.lng === "number" ? r.lng : null,
+      source: "live" as const,
+    } as Lead;
+  }).filter((x): x is Lead => x !== null);
 }
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
-    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set on this function.");
-
     const { query } = await req.json();
     if (!query || !String(query).trim()) throw new Error("Missing search query.");
+    const q = String(query).trim();
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 8000,
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }],
-        messages: [{ role: "user", content: buildPrompt(String(query).trim()) }],
-      }),
-    });
+    const placesKey = Deno.env.get("GOOGLE_PLACES_API_KEY");
+    let leads: Lead[];
+    if (placesKey) {
+      leads = await searchPlaces(placesKey, q);
+    } else {
+      const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!anthropic) throw new Error("Set GOOGLE_PLACES_API_KEY (recommended) or ANTHROPIC_API_KEY on this function.");
+      leads = await searchClaude(anthropic, q);
+    }
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error?.message || `Anthropic API ${res.status}`);
-
-    const text = (data.content ?? [])
-      .filter((b: { type: string }) => b.type === "text")
-      .map((b: { text: string }) => b.text)
-      .join("\n");
-
-    const leads = extractJson(text).map(normalize).filter(Boolean);
-
-    // De-dupe by id (same business surfaced twice in one search).
+    // De-dupe by id.
     const seen = new Set<string>();
-    const unique = leads.filter((l) => {
-      if (!l || seen.has(l.id)) return false;
-      seen.add(l.id);
-      return true;
-    });
+    const unique = leads.filter((l) => l.id && !seen.has(l.id) && seen.add(l.id));
 
-    return new Response(JSON.stringify({ leads: unique }), {
+    return new Response(JSON.stringify({ leads: unique, count: unique.length }), {
       headers: { ...cors, "Content-Type": "application/json" },
     });
   } catch (e) {

@@ -20,6 +20,7 @@ export interface Lead {
   rating: number | null
   reviews: number | null
   web_status: 'confirmed' | 'likely' | 'maybe'
+  website: string | null
   lat: number | null
   lng: number | null
   source: LeadSource

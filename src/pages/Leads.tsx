@@ -47,6 +47,13 @@ export default function Leads() {
   const [showAdd, setShowAdd] = useState(false)
   const [liveMsg, setLiveMsg] = useState<string | null>(null)
   const [searching, setSearching] = useState(false)
+  // After a live search, scope the board to exactly the leads it returned so they're
+  // all visible regardless of the current text/area/status filters.
+  const [liveResultIds, setLiveResultIds] = useState<string[] | null>(null)
+  const [liveQuery, setLiveQuery] = useState('')
+
+  // Leave the live-search result view and return to normal filtering.
+  const clearLive = useCallback(() => { setLiveResultIds(null); setLiveMsg(null) }, [])
 
   const load = useCallback(() => {
     supabase.from('leads').select('*').order('reviews', { ascending: false, nullsFirst: false })
@@ -79,10 +86,15 @@ export default function Leads() {
   }, [leads, q, area, cat])
 
   const filtered = useMemo(() => {
-    const rows = status === 'all' ? scoped : scoped.filter((l) => l.status === status)
-    const by = SORTS[sort].cmp
-    return [...rows].sort(by)
-  }, [scoped, status, sort])
+    let rows: Lead[]
+    if (liveResultIds) {
+      const set = new Set(liveResultIds)
+      rows = leads.filter((l) => set.has(l.id)) // show exactly the live-search results
+    } else {
+      rows = status === 'all' ? scoped : scoped.filter((l) => l.status === status)
+    }
+    return [...rows].sort(SORTS[sort].cmp)
+  }, [scoped, leads, liveResultIds, status, sort])
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {}
@@ -108,7 +120,7 @@ export default function Leads() {
 
   function exportCsv() {
     const cols: (keyof Lead)[] = ['name', 'category', 'area', 'phone', 'address', 'zip',
-      'rating', 'reviews', 'web_status', 'status', 'contacted_on', 'notes', 'source', 'lat', 'lng']
+      'rating', 'reviews', 'web_status', 'website', 'status', 'contacted_on', 'notes', 'source', 'lat', 'lng']
     const esc = (v: unknown) => {
       const s = v == null ? '' : String(v)
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
@@ -128,20 +140,28 @@ export default function Leads() {
   async function liveSearch() {
     const query = q.trim()
     if (!query) { setLiveMsg('Type what to search for (e.g. "roofers in Conroe") then hit Live search.'); return }
-    setSearching(true); setLiveMsg(null)
+    setSearching(true); setLiveMsg(null); setLiveResultIds(null)
     try {
       const { data, error } = await supabase.functions.invoke('lead-search', { body: { query } })
       if (error) throw error
       const found = (data as { leads?: Lead[] } | null)?.leads ?? []
-      if (found.length) {
-        await supabase.from('leads').upsert(found.map((f) => ({ ...f, source: 'live' as const })), { onConflict: 'id' })
-        load()
-        setLiveMsg(`Added ${found.length} lead${found.length > 1 ? 's' : ''} from live search.`)
-      } else {
-        setLiveMsg('Live search ran but returned no new businesses.')
-      }
-    } catch {
-      setLiveMsg("Live web search isn't wired up yet — the lead-search edge function isn't deployed. ＋ Add lead still works fully.")
+      // De-dupe by id before upsert (Postgres rejects the same id twice in one upsert).
+      const byId = new Map(found.filter((f) => f?.id).map((f) => [f.id, { ...f, source: 'live' as const }]))
+      const rows = [...byId.values()]
+      if (!rows.length) { setLiveMsg('Live search ran but returned no businesses.'); return }
+
+      const { data: saved, error: upErr } = await supabase
+        .from('leads').upsert(rows, { onConflict: 'id' }).select('id')
+      if (upErr) throw upErr
+
+      const ids = (saved as { id: string }[] | null)?.map((r) => r.id) ?? rows.map((r) => r.id)
+      await load()
+      setLiveResultIds(ids)   // pin the board to just these results
+      setLiveQuery(query)
+      setLiveMsg(null)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Live search failed.'
+      setLiveMsg(`Live search failed: ${msg}`)
     } finally {
       setSearching(false)
     }
@@ -155,7 +175,7 @@ export default function Leads() {
         <>
           <div style={searchWrap}>
             <span style={{ color: 'var(--ink-muted)', display: 'flex' }}><Icon name="search" size={16} /></span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, category, address…" style={searchInput} />
+            <input value={q} onChange={(e) => { setQ(e.target.value); clearLive() }} placeholder="Search name, category, address…" style={searchInput} />
           </div>
           <button onClick={liveSearch} disabled={searching} style={ghostBtn} title="Find new businesses via web search">
             🔍 {searching ? 'Searching…' : 'Live search'}
@@ -170,6 +190,14 @@ export default function Leads() {
       {open && <OutreachDrawer lead={open} onClose={() => setOpen(null)} onPatch={patch} onRemove={remove} />}
       {showAdd && <AddLead onClose={() => setShowAdd(false)} onCreated={load} />}
 
+      {liveResultIds && (
+        <div style={noticeBox}>
+          <span style={{ flex: 1 }}>
+            Showing <b>{liveResultIds.length}</b> lead{liveResultIds.length !== 1 ? 's' : ''} from your search{liveQuery ? ` for “${liveQuery}”` : ''}. These are saved to your board.
+          </span>
+          <button onClick={clearLive} style={noticeClose}>Show all leads</button>
+        </div>
+      )}
       {liveMsg && (
         <div style={noticeBox}>
           <span style={{ flex: 1 }}>{liveMsg}</span>
@@ -179,12 +207,12 @@ export default function Leads() {
 
       {/* Area + industry + sort */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-        <Chip active={area === 'all'} onClick={() => setArea('all')}>All areas</Chip>
-        {areas.map((a) => <Chip key={a} active={area === a} onClick={() => setArea(a)}>{a}</Chip>)}
+        <Chip active={area === 'all'} onClick={() => { setArea('all'); clearLive() }}>All areas</Chip>
+        {areas.map((a) => <Chip key={a} active={area === a} onClick={() => { setArea(a); clearLive() }}>{a}</Chip>)}
         <span style={{ width: 1, height: 20, background: 'var(--line)', margin: '0 4px' }} />
         <label style={selectWrap}>
           <span style={{ color: 'var(--ink-muted)' }}>Industry</span>
-          <select value={cat} onChange={(e) => setCat(e.target.value)} style={select}>
+          <select value={cat} onChange={(e) => { setCat(e.target.value); clearLive() }} style={select}>
             <option value="all">All industries</option>
             {cats.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -199,9 +227,9 @@ export default function Leads() {
 
       {/* Status */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 14 }}>
-        <Chip active={status === 'all'} onClick={() => setStatus('all')}>All ({scoped.length})</Chip>
+        <Chip active={status === 'all' && !liveResultIds} onClick={() => { setStatus('all'); clearLive() }}>All ({scoped.length})</Chip>
         {STATUS.map((s) => (
-          <Chip key={s.id} active={status === s.id} onClick={() => setStatus(s.id)} dot={s.color}>
+          <Chip key={s.id} active={status === s.id && !liveResultIds} onClick={() => { setStatus(s.id); clearLive() }} dot={s.color}>
             {s.label}{counts[s.id] ? ` ${counts[s.id]}` : ''}
           </Chip>
         ))}
@@ -227,6 +255,7 @@ export default function Leads() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                     {l.area && <span style={metaChip}>{l.area}</span>}
                     {l.rating != null && <span style={{ fontSize: 12.5, color: 'var(--ink-soft)' }} className="num">★ {l.rating} · {l.reviews ?? 0}</span>}
+                    {!l.website && <span style={noSiteBadge}>No website</span>}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, fontSize: 12.5, color: 'var(--ink-muted)' }}>
                     <span>{l.phone ?? 'No phone'}</span>
@@ -374,6 +403,11 @@ function OutreachDrawer({ lead, onClose, onPatch, onRemove }: {
             {lead.phone ? <a href={`tel:${lead.phone}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{lead.phone}</a> : <span style={{ color: 'var(--ink-muted)' }}>—</span>}
           </Field>
           <Field label="Address">{[lead.address, lead.zip].filter(Boolean).join(' ') || '—'}</Field>
+          <Field label="Website">
+            {lead.website
+              ? <a href={lead.website} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none', wordBreak: 'break-all' }}>{lead.website.replace(/^https?:\/\//, '')}</a>
+              : <span style={{ color: 'var(--green)', fontWeight: 600 }}>None — strong prospect</span>}
+          </Field>
         </dl>
 
         <div style={{ marginTop: 22 }}>
@@ -533,6 +567,10 @@ const pill: React.CSSProperties = {
 const metaChip: React.CSSProperties = {
   fontSize: 11.5, fontWeight: 500, color: 'var(--ink-soft)', background: 'var(--rail)',
   border: '1px solid var(--line-3)', padding: '2px 8px', borderRadius: 6,
+}
+const noSiteBadge: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, color: 'var(--green)', background: 'var(--green-bg)',
+  padding: '2px 8px', borderRadius: 6,
 }
 const mapWrap: React.CSSProperties = {
   position: 'relative', background: 'var(--rail)', border: '1px solid var(--line-2)',
