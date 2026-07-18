@@ -97,6 +97,14 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
     await supabase.from('invites').delete().eq('id', id)
     load()
   }
+  async function resendInvite(inv: Invite) {
+    setBusy(true); setErr(null); setNote(null)
+    const { error } = await supabase.functions.invoke('send-invite', {
+      body: { email: inv.email, name: inv.name, role: inv.role, orgName, inviterName: myName, appUrl: window.location.origin },
+    })
+    setBusy(false)
+    setNote(error ? `Couldn't resend to ${inv.email} (${error.message}).` : `Invite email re-sent to ${inv.email}.`)
+  }
   async function sendInvite(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true); setErr(null); setNote(null)
@@ -166,6 +174,7 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
               </div>
               <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>{i.email} · {i.role}</div>
             </div>
+            <button onClick={() => resendInvite(i)} disabled={busy} style={resendBtn}>Resend</button>
             <button onClick={() => cancelInvite(i.id)} style={xBtn} aria-label="Cancel invite">×</button>
           </div>
         ))}
@@ -180,7 +189,7 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
         <button type="submit" disabled={busy} style={btn}>{busy ? '…' : 'Send invite'}</button>
       </form>
       {err && <p style={{ color: '#c33', fontSize: 13, marginTop: 8 }}>{err}</p>}
-      {note && <p style={{ color: note.startsWith('Invite email sent') ? 'var(--green)' : 'var(--amber)', fontSize: 13, marginTop: 8 }}>{note}</p>}
+      {note && <p style={{ color: /couldn|didn|fail/i.test(note) ? 'var(--amber)' : 'var(--green)', fontSize: 13, marginTop: 8 }}>{note}</p>}
       <p style={{ color: 'var(--ink-muted)', fontSize: 12, marginTop: 8 }}>
         We email the invitee a link to create their account. They join this workspace with the
         chosen role automatically — as long as they sign up with the invited email address.
@@ -217,4 +226,8 @@ const pendingChip: React.CSSProperties = {
 }
 const xBtn: React.CSSProperties = {
   border: 'none', background: 'transparent', fontSize: 18, cursor: 'pointer', color: 'var(--ink-muted)', padding: '0 4px',
+}
+const resendBtn: React.CSSProperties = {
+  border: '1px solid var(--line)', background: 'var(--panel)', color: 'var(--accent)', fontWeight: 600,
+  fontSize: 12, cursor: 'pointer', padding: '4px 10px', borderRadius: 8,
 }
