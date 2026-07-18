@@ -194,7 +194,7 @@ export default function InvoiceModal({ deal, onClose, onChange }: { deal: Deal; 
 
               {/* RIGHT — branded invoice */}
               <div style={preview}>
-                <div style={paper}>
+                <div style={paper} className="invoice-print">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <img src={org?.logo || '/logo.png'} alt={org?.name} style={{ height: 34, marginBottom: 10 }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
