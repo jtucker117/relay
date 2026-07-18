@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase'
 export default function Login() {
   const [params] = useSearchParams()
   const invitedEmail = params.get('email') ?? ''
-  const [mode, setMode] = useState<'signin' | 'signup' | 'magic'>(invitedEmail ? 'signup' : 'signin')
+  const [mode, setMode] = useState<'signin' | 'signup' | 'magic' | 'reset'>(invitedEmail ? 'signup' : 'signin')
   const [email, setEmail] = useState(invitedEmail)
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
@@ -28,6 +28,12 @@ export default function Login() {
         })
         if (error) throw error
         setMsg('Account created. Check your email if confirmation is required, then sign in.')
+      } else if (mode === 'reset') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        })
+        if (error) throw error
+        setMsg('Password reset link sent — check your inbox.')
       } else {
         const { error } = await supabase.auth.signInWithOtp({ email })
         if (error) throw error
@@ -51,7 +57,9 @@ export default function Login() {
         <p style={{ color: 'var(--ink-soft)', margin: '0 0 20px' }}>
           {invitedEmail && mode === 'signup'
             ? "You've been invited — create your account to join."
-            : mode === 'signup' ? 'Create your account' : 'Sign in to your workspace'}
+            : mode === 'signup' ? 'Create your account'
+            : mode === 'reset' ? "Enter your email and we'll send a reset link"
+            : 'Sign in to your workspace'}
         </p>
 
         <form onSubmit={submit} style={{ display: 'grid', gap: 12 }}>
@@ -61,23 +69,28 @@ export default function Login() {
           )}
           <input style={input} type="email" placeholder="you@agency.com" value={email}
             onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
-          {mode !== 'magic' && (
+          {mode !== 'magic' && mode !== 'reset' && (
             <input style={input} type="password" placeholder="Password" value={password}
               onChange={(e) => setPassword(e.target.value)} required minLength={6}
               autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />
           )}
           <button style={primaryBtn} disabled={busy}>
-            {busy ? '…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send magic link'}
+            {busy ? '…'
+              : mode === 'signin' ? 'Sign in'
+              : mode === 'signup' ? 'Create account'
+              : mode === 'reset' ? 'Send reset link'
+              : 'Send magic link'}
           </button>
         </form>
 
         {err && <p style={{ color: 'var(--red, #c33)', marginTop: 12 }}>{err}</p>}
         {msg && <p style={{ color: 'var(--green)', marginTop: 12 }}>{msg}</p>}
 
-        <div style={{ display: 'flex', gap: 14, marginTop: 18, fontSize: 13 }}>
+        <div style={{ display: 'flex', gap: 14, marginTop: 18, fontSize: 13, flexWrap: 'wrap' }}>
           {mode !== 'signin' && <a style={link} onClick={() => setMode('signin')}>Sign in</a>}
           {mode !== 'signup' && <a style={link} onClick={() => setMode('signup')}>Create account</a>}
           {mode !== 'magic' && <a style={link} onClick={() => setMode('magic')}>Email me a link</a>}
+          {mode === 'signin' && <a style={link} onClick={() => { setMode('reset'); setErr(null); setMsg(null) }}>Forgot password?</a>}
         </div>
       </div>
     </div>

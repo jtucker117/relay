@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth/AuthProvider'
 import Login from './pages/Login'
+import ResetPassword from './pages/ResetPassword'
 import Onboarding from './pages/Onboarding'
 import AppShell from './components/AppShell'
 import Pipeline from './pages/Pipeline'
@@ -19,9 +20,12 @@ function Splash({ label }: { label: string }) {
 }
 
 export default function App() {
-  const { session, profile, loading } = useAuth()
+  const { session, profile, loading, recovering } = useAuth()
 
   if (loading) return <Splash label="Loading…" />
+
+  // Arrived from a password-reset email → set a new password before anything else.
+  if (recovering) return <ResetPassword />
 
   // Not signed in → auth screen.
   if (!session) {

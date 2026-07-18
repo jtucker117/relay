@@ -7,6 +7,8 @@ interface AuthState {
   session: Session | null
   profile: Profile | null
   loading: boolean
+  recovering: boolean
+  clearRecovering: () => void
   refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -17,6 +19,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [recovering, setRecovering] = useState(false)
 
   async function loadProfile(userId: string) {
     let { data } = await supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle()
@@ -43,7 +46,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false)
     })
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, s) => {
+      // Arriving from a password-reset email → show the "set new password" screen.
+      if (event === 'PASSWORD_RECOVERY') setRecovering(true)
       setSession(s)
       if (s?.user) await loadProfile(s.user.id)
       else setProfile(null)
@@ -54,10 +59,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     await supabase.auth.signOut()
     setProfile(null)
+    setRecovering(false)
   }
 
   return (
-    <Ctx.Provider value={{ session, profile, loading, refreshProfile, signOut }}>
+    <Ctx.Provider value={{ session, profile, loading, recovering, clearRecovering: () => setRecovering(false), refreshProfile, signOut }}>
       {children}
     </Ctx.Provider>
   )
