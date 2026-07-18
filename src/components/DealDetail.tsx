@@ -56,7 +56,7 @@ export default function DealDetail({ deal, onClose, onChange }: {
       {showInvoice && <InvoiceModal deal={d} onClose={() => setShowInvoice(false)} onChange={onChange} />}
       <aside style={panel} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <div style={header}>
+        <div className="deal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ ...chip, background: stageDef(d.stage).color + '22', color: stageDef(d.stage).color }}>{stageDef(d.stage).name}</span>
             <span style={{ ...chip, background: color + '1F', color }}>{p.name}</span>
@@ -86,8 +86,8 @@ export default function DealDetail({ deal, onClose, onChange }: {
           </div>
         </div>
 
-        {/* Two-column body */}
-        <div style={body}>
+        {/* Two-column body (stacks on mobile) */}
+        <div className="deal-body">
           {/* LEFT */}
           <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
             <Card label="Client details" action={<button style={editBtn} onClick={() => setEditContact(!editContact)}>✎ {editContact ? 'Done' : 'Edit'}</button>}>
@@ -257,8 +257,6 @@ function timeAgo(iso: string): string {
 
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(20,20,25,0.35)', zIndex: 40, display: 'flex', justifyContent: 'flex-end' }
 const panel: React.CSSProperties = { width: 'min(960px, 96vw)', background: 'var(--canvas)', height: '100%', overflowY: 'auto', boxShadow: '-10px 0 40px rgba(0,0,0,0.18)' }
-const header: React.CSSProperties = { background: 'var(--panel)', borderBottom: '1px solid var(--line)', padding: '22px 28px 20px' }
-const body: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0,1.15fr) minmax(0,1fr)', gap: 20, padding: 24 }
 const chip: React.CSSProperties = { fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20 }
 const titleInput: React.CSSProperties = { fontFamily: 'Space Grotesk', fontSize: 28, fontWeight: 700, border: 'none', background: 'transparent', width: '100%', padding: 0, margin: '12px 0 0', outline: 'none' }
 const subInput: React.CSSProperties = { fontSize: 15, color: 'var(--ink-soft)', border: 'none', background: 'transparent', width: '100%', padding: 0, outline: 'none' }
