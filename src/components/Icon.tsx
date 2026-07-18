@@ -8,6 +8,7 @@ const paths: Record<string, React.ReactNode> = {
   search: <><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></>,
   bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></>,
   leads: <><path d="M20 10c0 6-8 11-8 11s-8-5-8-11a8 8 0 0 1 16 0Z" /><circle cx="12" cy="10" r="3" /></>,
+  menu: <><path d="M3 6h18" /><path d="M3 12h18" /><path d="M3 18h18" /></>,
 }
 
 export default function Icon({ name, size = 18 }: { name: string; size?: number }) {

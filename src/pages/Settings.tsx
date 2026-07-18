@@ -180,7 +180,7 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
         ))}
       </div>
 
-      <form onSubmit={sendInvite} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 8, marginTop: 16, alignItems: 'center' }}>
+      <form onSubmit={sendInvite} className="invite-form">
         <input style={input} placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
         <input style={input} type="email" placeholder="email@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <select style={roleSelect} value={role} onChange={(e) => setRole(e.target.value as Role)}>

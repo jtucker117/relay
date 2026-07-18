@@ -17,6 +17,7 @@ export default function AppShell() {
   const { profile, signOut } = useAuth()
   const [orgName, setOrgName] = useState('')
   const [openTasks, setOpenTasks] = useState(0)
+  const [menuOpen, setMenuOpen] = useState(false) // mobile drawer
 
   useEffect(() => {
     if (!profile?.org_id) return
@@ -31,8 +32,10 @@ export default function AppShell() {
     .split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
 
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      <aside style={sidebar}>
+    <div className="app-shell">
+      {/* Mobile scrim + drawer */}
+      <div className={'app-scrim' + (menuOpen ? ' open' : '')} onClick={() => setMenuOpen(false)} />
+      <aside className={'app-sidebar' + (menuOpen ? ' open' : '')}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 8px 20px' }}>
           <span style={logoMark}>R</span>
           <b style={{ color: '#fff', fontFamily: 'Space Grotesk', fontSize: 18 }}>Relay</b>
@@ -41,7 +44,7 @@ export default function AppShell() {
 
         <nav style={{ display: 'grid', gap: 3 }}>
           {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end}
+            <NavLink key={n.to} to={n.to} end={n.end} onClick={() => setMenuOpen(false)}
               style={({ isActive }) => ({
                 display: 'flex', alignItems: 'center', gap: 11, padding: '9px 12px', borderRadius: 9,
                 textDecoration: 'none', fontWeight: 500, fontSize: 14,
@@ -79,17 +82,22 @@ export default function AppShell() {
         </div>
       </aside>
 
-      <main style={{ flex: 1, minWidth: 0, overflow: 'auto' }}>
-        <Outlet />
-      </main>
+      <div className="app-body">
+        <div className="app-topbar">
+          <button className="app-burger" onClick={() => setMenuOpen(true)} aria-label="Open menu">
+            <Icon name="menu" size={22} />
+          </button>
+          <span style={logoMark}>R</span>
+          <b style={{ color: '#fff', fontFamily: 'Space Grotesk', fontSize: 17 }}>Relay</b>
+        </div>
+        <main className="app-main">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }
 
-const sidebar: React.CSSProperties = {
-  width: 236, flexShrink: 0, background: 'var(--sidebar)', color: '#fff',
-  padding: 16, display: 'flex', flexDirection: 'column',
-}
 const logoMark: React.CSSProperties = {
   width: 30, height: 30, borderRadius: 8, background: 'var(--accent)', color: '#fff',
   display: 'grid', placeItems: 'center', fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16,
