@@ -408,6 +408,14 @@ function OutreachDrawer({ lead, onClose, onPatch, onRemove }: {
               ? <a href={lead.website} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none', wordBreak: 'break-all' }}>{lead.website.replace(/^https?:\/\//, '')}</a>
               : <span style={{ color: 'var(--green)', fontWeight: 600 }}>None — strong prospect</span>}
           </Field>
+          {lead.place_id && (
+            <Field label="Google">
+              <a href={`https://www.google.com/maps/place/?q=place_id:${lead.place_id}`} target="_blank" rel="noreferrer"
+                style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                View on Google{lead.reviews ? ` · ${lead.reviews} reviews` : ''} ↗
+              </a>
+            </Field>
+          )}
         </dl>
 
         <div style={{ marginTop: 22 }}>

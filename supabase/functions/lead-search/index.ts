@@ -54,7 +54,14 @@ async function searchPlaces(key: string, query: string): Promise<Lead[]> {
   const out: Lead[] = [];
   let pageToken: string | undefined;
   for (let page = 0; page < 3; page++) { // up to 60 businesses
-    const body: Record<string, unknown> = { textQuery: query, maxResultCount: 20, regionCode: "US" };
+    // Bias toward the SiteStac service area (Magnolia / The Woodlands / Conroe) so a bare
+    // query like "roofers" returns local businesses. A town named in the query still wins.
+    const body: Record<string, unknown> = {
+      textQuery: query,
+      maxResultCount: 20,
+      regionCode: "US",
+      locationBias: { circle: { center: { latitude: 30.2, longitude: -95.55 }, radius: 50000 } },
+    };
     if (pageToken) body.pageToken = pageToken;
 
     const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
