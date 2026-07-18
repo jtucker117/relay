@@ -19,7 +19,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   async function loadProfile(userId: string) {
-    const { data } = await supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle()
+    let { data } = await supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle()
+    // If this account has no workspace yet but a pending invite matches its email
+    // (e.g. someone who already had an account got invited), join that workspace now.
+    if (data && !(data as Profile).org_id) {
+      const { data: joined } = await supabase.rpc('accept_pending_invite')
+      if (joined) {
+        const res = await supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle()
+        data = res.data
+      }
+    }
     setProfile((data as Profile) ?? null)
   }
 
