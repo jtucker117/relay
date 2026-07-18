@@ -182,8 +182,8 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
       {err && <p style={{ color: '#c33', fontSize: 13, marginTop: 8 }}>{err}</p>}
       {note && <p style={{ color: note.startsWith('Invite email sent') ? 'var(--green)' : 'var(--amber)', fontSize: 13, marginTop: 8 }}>{note}</p>}
       <p style={{ color: 'var(--ink-muted)', fontSize: 12, marginTop: 8 }}>
-        Supabase emails the invitee an invitation. They accept from their inbox and land in this
-        workspace with the chosen role — no separate signup needed.
+        We email the invitee a link to create their account. They join this workspace with the
+        chosen role automatically — as long as they sign up with the invited email address.
       </p>
     </section>
   )
