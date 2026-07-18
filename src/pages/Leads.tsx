@@ -102,6 +102,13 @@ export default function Leads() {
     return c
   }, [scoped])
 
+  // Keep the open lead on the map even if the current filter would hide it, so changing
+  // its status recolors its dot in place rather than making the pin disappear.
+  const mapLeads = useMemo(() => {
+    if (open && !filtered.some((l) => l.id === open.id)) return [...filtered, open]
+    return filtered
+  }, [filtered, open])
+
   // Persist an outreach change and reflect it locally without a full reload.
   async function patch(id: string, fields: Partial<Lead>) {
     const { error } = await supabase.from('leads').update(fields).eq('id', id)
@@ -240,7 +247,7 @@ export default function Leads() {
 
       {!loading && !err && (
         <>
-          <LeadMap leads={filtered} onPick={setOpen} />
+          <LeadMap leads={mapLeads} onPick={setOpen} />
 
           <div style={grid}>
             {filtered.map((l) => {
@@ -280,6 +287,7 @@ function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }
   const el = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
   const markersRef = useRef<google.maps.Marker[]>([])
+  const lastFitRef = useRef('') // only re-fit when the SET of pins changes, not on a recolor
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick // always call the latest handler without re-running effects
   const [state, setState] = useState<MapState>('loading')
@@ -329,9 +337,13 @@ function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }
       markersRef.current.push(marker)
       bounds.extend(position)
     }
-    if (pts.length) {
+    // Only re-fit the viewport when the SET of pins changes — not when a pin just
+    // recolors (status change) — so the dot visibly changes color without the map jumping.
+    const sig = pts.map((p) => p.id).join(',')
+    if (pts.length && sig !== lastFitRef.current) {
       map.fitBounds(bounds, 40)
       if (pts.length === 1) map.setZoom(13)
+      lastFitRef.current = sig
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, state])

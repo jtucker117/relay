@@ -21,6 +21,14 @@ const cors = {
 
 const WEB_STATUS = new Set(["confirmed", "likely", "maybe"]);
 
+// Non-business place types Google may return for a bare city/region query — skip these.
+const GEO_TYPES = new Set([
+  "locality", "political", "administrative_area_level_1", "administrative_area_level_2",
+  "administrative_area_level_3", "country", "postal_code", "postal_town", "neighborhood",
+  "sublocality", "sublocality_level_1", "route", "street_address", "colloquial_area",
+  "natural_feature", "archipelago", "continent", "plus_code", "premise",
+]);
+
 interface Lead {
   id: string; place_id: string | null; name: string; category: string | null;
   area: string | null; phone: string | null; address: string | null; zip: string | null;
@@ -47,7 +55,8 @@ async function searchPlaces(key: string, query: string): Promise<Lead[]> {
   const fieldMask = [
     "places.id", "places.displayName", "places.formattedAddress", "places.nationalPhoneNumber",
     "places.rating", "places.userRatingCount", "places.location", "places.websiteUri",
-    "places.businessStatus", "places.primaryTypeDisplayName", "places.addressComponents",
+    "places.businessStatus", "places.primaryTypeDisplayName", "places.primaryType",
+    "places.types", "places.addressComponents",
     "nextPageToken",
   ].join(",");
 
@@ -74,6 +83,10 @@ async function searchPlaces(key: string, query: string): Promise<Lead[]> {
 
     for (const p of (data.places ?? [])) {
       if (p.businessStatus && p.businessStatus !== "OPERATIONAL") continue;
+      // Skip geographic/administrative results (a bare city query like "the woodlands"
+      // returns the city itself) — we only want actual businesses.
+      const types: string[] = p.types ?? [];
+      if (GEO_TYPES.has(p.primaryType) || (types.length > 0 && types.every((t) => GEO_TYPES.has(t)))) continue;
       const name = p.displayName?.text ?? "";
       if (!name) continue;
       const website = p.websiteUri || null;
