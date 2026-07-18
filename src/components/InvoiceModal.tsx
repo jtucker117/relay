@@ -131,7 +131,7 @@ export default function InvoiceModal({ deal, onClose, onChange }: { deal: Deal; 
         ) : (
           <>
             {/* Header */}
-            <div style={topbar}>
+            <div style={topbar} className="invoice-topbar">
               <span style={{ fontSize: 18 }}>🧾</span>
               <b style={{ fontFamily: 'Space Grotesk', fontSize: 16 }}>Invoice designer</b>
               <span style={{ color: 'var(--ink-soft)', fontSize: 14 }}>{inv.number}</span>
@@ -142,9 +142,9 @@ export default function InvoiceModal({ deal, onClose, onChange }: { deal: Deal; 
               </div>
             </div>
 
-            <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+            <div className="invoice-body" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
               {/* LEFT RAIL — editor */}
-              <div style={rail}>
+              <div style={rail} className="invoice-rail">
                 <Label>Status</Label>
                 {inv.status === 'draft' && <button onClick={() => setStatus('sent')} style={{ ...primary, width: '100%' }}>Send to client</button>}
                 {inv.status === 'sent' && <button onClick={() => setStatus('paid')} style={{ ...primary, width: '100%', background: 'var(--green-2)' }}>Mark as paid</button>}
@@ -193,7 +193,7 @@ export default function InvoiceModal({ deal, onClose, onChange }: { deal: Deal; 
               </div>
 
               {/* RIGHT — branded invoice */}
-              <div style={preview}>
+              <div style={preview} className="invoice-preview">
                 <div style={paper} className="invoice-print">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
