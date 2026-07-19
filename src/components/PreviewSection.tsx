@@ -28,6 +28,8 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
   const [slug, setSlug] = useState<string | null>(null)
   const [live, setLive] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [code, setCode] = useState<string | null>(null)
+  const [views, setViews] = useState<{ count: number; last: string | null } | null>(null)
   const shareUrl = slug ? `${FN_BASE}?p=${slug}` : ''
 
   // Restore the saved draft + any published share link for this deal on mount.
@@ -41,9 +43,13 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
         else if (draft.external_url) { setActiveUrl(draft.external_url); setHtml(null) }
       }
       const { data: pubs } = await supabase.from('previews')
-        .select('slug,active').eq('deal_id', deal.id).order('published_at', { ascending: false }).limit(1)
-      const pub = pubs?.[0] as { slug: string; active: boolean } | undefined
-      if (!cancelled && pub) { setSlug(pub.slug); setLive(pub.active) }
+        .select('slug,active,access_code,view_count,last_viewed_at')
+        .eq('deal_id', deal.id).order('published_at', { ascending: false }).limit(1)
+      const pub = pubs?.[0] as { slug: string; active: boolean; access_code: string | null; view_count: number | null; last_viewed_at: string | null } | undefined
+      if (!cancelled && pub) {
+        setSlug(pub.slug); setLive(pub.active); setCode(pub.access_code)
+        setViews({ count: pub.view_count ?? 0, last: pub.last_viewed_at })
+      }
     })()
     return () => { cancelled = true }
   }, [deal.id])
@@ -64,6 +70,7 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
     setPublishing(true); setErr(null)
     try {
       const s = `${slugify(deal.company)}-${rand()}`
+      const ac = Math.random().toString(36).slice(2, 8).toUpperCase() // client access code
       if (html !== null) {
         const { error: upErr } = await supabase.storage.from('previews')
           .upload(`${s}.html`, new Blob([html], { type: 'text/html' }), { upsert: true, contentType: 'text/html' })
@@ -73,11 +80,11 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
       const { error: insErr } = await supabase.from('previews').insert({
         slug: s, org_id: profile.org_id, deal_id: deal.id, company: deal.company,
         contact: deal.contact, client_email: deal.email,
-        package_name: p.name, tier_name: p.tier,
+        package_name: p.name, tier_name: p.tier, access_code: ac,
         external_url: html === null ? activeUrl : null, status: 'review', active: true,
       })
       if (insErr) throw insErr
-      setSlug(s); setLive(true)
+      setSlug(s); setLive(true); setCode(ac); setViews({ count: 0, last: null })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Publish failed. Did you run migration 003 and deploy the preview function?')
     } finally {
@@ -205,14 +212,14 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
                 {publishing ? 'Publishing…' : 'Publish → get share link'}
               </button>
               <p style={{ color: 'var(--ink-muted)', fontSize: 12, marginTop: 8 }}>
-                Locks the preview to <b>{deal.email || 'the client email on this deal'}</b>. The viewer sees the site, not the code.
+                Generates a private link + access code — share both with your client. They enter the code to view, and you'll see when they open it.
               </p>
             </div>
           ) : (
             <div style={sharePanel}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: live ? 'var(--green-2)' : 'var(--ink-muted)' }} />
-                <b style={{ fontSize: 13 }}>{live ? 'Live — email-locked' : 'Turned off'}</b>
+                <b style={{ fontSize: 13 }}>{live ? 'Live — code-locked' : 'Turned off'}</b>
                 <label style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={live} onChange={toggleLive} style={{ marginRight: 5 }} />
                   Link active
@@ -223,6 +230,18 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
                 <button onClick={copyLink} style={ghostBtn}>{copied ? 'Copied!' : 'Copy'}</button>
                 <a href={shareUrl} target="_blank" rel="noreferrer" style={{ ...ghostBtn, textDecoration: 'none', display: 'grid', placeItems: 'center' }}>Open ↗</a>
               </div>
+              {code && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 13, flexWrap: 'wrap' }}>
+                  <span style={{ color: 'var(--ink-soft)' }}>Access code</span>
+                  <b className="num" style={{ letterSpacing: '.1em', fontSize: 15 }}>{code}</b>
+                  <button onClick={() => navigator.clipboard?.writeText(code)} style={{ ...ghostBtn, padding: '4px 10px', fontSize: 12 }}>Copy</button>
+                  <span style={{ marginLeft: 'auto', color: views && views.count > 0 ? 'var(--green)' : 'var(--ink-muted)', fontSize: 12.5 }}>
+                    {views && views.count > 0
+                      ? `Viewed ${views.count}× · last ${new Date(views.last!).toLocaleDateString([], { month: 'short', day: 'numeric' })}`
+                      : 'Not viewed yet'}
+                  </span>
+                </div>
+              )}
               {activeUrl && <p style={{ color: 'var(--amber)', fontSize: 12, marginTop: 8 }}>Heads-up: this is an external URL — the code lives on their server, so it isn't code-protected.</p>}
             </div>
           )}

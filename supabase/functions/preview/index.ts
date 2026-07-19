@@ -38,15 +38,11 @@ async function sign(data: string): Promise<string> {
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-async function cookieValid(cookieVal: string | null, slug: string, email: string): Promise<boolean> {
-  if (!cookieVal || !email) return false;
-  const [b64, sig] = cookieVal.split(".");
-  if (!b64 || !sig) return false;
-  try {
-    const got = atob(b64.replace(/-/g, "+").replace(/_/g, "/"));
-    if (got.toLowerCase() !== email.toLowerCase()) return false;
-    return sig === (await sign(`${slug}:${email.toLowerCase()}`));
-  } catch { return false; }
+async function cookieValid(cookieVal: string | null, slug: string): Promise<boolean> {
+  if (!cookieVal) return false;
+  const sig = cookieVal.split(".")[1];
+  if (!sig) return false;
+  return sig === (await sign(`${slug}:ok`));
 }
 
 function readCookie(req: Request, name: string): string | null {
@@ -89,6 +85,8 @@ Deno.serve(async (req: Request) => {
 
   const cookieName = `pv_${slug}`;
   const email = (rec.client_email ?? "").trim();
+  const code = (rec.access_code ?? "").trim();
+  const gated = !!(code || email);
 
   if (req.method === "POST") {
     const form = await req.formData();
@@ -98,9 +96,11 @@ Deno.serve(async (req: Request) => {
       // Relative redirect so it works whether served at supabase.co/... or proxied at relay.sitestac.com/preview.
       return new Response(null, { status: 303, headers: { Location: `?p=${slug}` } });
     }
-    const entered = String(form.get("email") ?? "").trim();
-    if (email && entered.toLowerCase() === email.toLowerCase()) {
-      const val = `${btoa(entered)}.${await sign(`${slug}:${email.toLowerCase()}`)}`;
+    const entered = String(form.get("code") ?? "").trim();
+    const ok = (code && entered.toUpperCase() === code.toUpperCase()) ||
+               (email && entered.toLowerCase() === email.toLowerCase());
+    if (ok) {
+      const val = `1.${await sign(`${slug}:ok`)}`;
       return new Response(null, {
         status: 303,
         headers: {
@@ -109,11 +109,11 @@ Deno.serve(async (req: Request) => {
         },
       });
     }
-    return shell("Enter your email", gateHtml(slug, esc(rec.company), true));
+    return shell("Enter your access code", gateHtml(slug, esc(rec.company), true));
   }
 
-  const unlocked = !email || (await cookieValid(readCookie(req, cookieName), slug, email));
-  if (!unlocked) return shell("Enter your email", gateHtml(slug, esc(rec.company), false));
+  const unlocked = !gated || (await cookieValid(readCookie(req, cookieName), slug));
+  if (!unlocked) return shell("Enter your access code", gateHtml(slug, esc(rec.company), false));
 
   // Raw site (framed by the portal only).
   if (url.searchParams.get("raw") === "1") {
@@ -125,6 +125,12 @@ Deno.serve(async (req: Request) => {
     return html(site, { "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'" });
   }
 
+  // Log the view — the client opened the portal.
+  await supa.from("previews").update({
+    view_count: (rec.view_count ?? 0) + 1,
+    last_viewed_at: new Date().toISOString(),
+  }).eq("slug", slug);
+
   const statusLabel = rec.status === "approved" ? "Approved" : rec.status === "changes" ? "Changes requested" : "In review";
   return html(portalHtml(slug, esc(rec.company), statusLabel));
 });
@@ -132,10 +138,10 @@ Deno.serve(async (req: Request) => {
 function gateHtml(slug: string, company: string, err: boolean) {
   return `<div class="wrap">
     <h1>Website preview for ${company}</h1>
-    <p>Enter the email this preview was sent to.</p>
+    <p>Enter the access code from your invitation to view your site.</p>
     <form method="post" action="?p=${slug}">
-      <input type="email" name="email" placeholder="you@company.com" required autofocus>
-      ${err ? `<div class="err">That email doesn't match. Try the address the link was sent to.</div>` : ""}
+      <input type="text" name="code" placeholder="Access code" required autofocus autocapitalize="characters" autocomplete="off">
+      ${err ? `<div class="err">That code doesn't match. Check the message your link came in.</div>` : ""}
       <button type="submit">View preview</button>
     </form>
   </div>`;
