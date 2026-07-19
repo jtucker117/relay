@@ -4,7 +4,8 @@ import { useAuth } from '../auth/AuthProvider'
 import { pkg } from '../lib/catalog'
 import type { Deal } from '../lib/types'
 
-const FN_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/preview`
+// Branded share URL — proxied to the Supabase preview function by the Cloudflare Worker.
+const FN_BASE = `${window.location.origin}/preview`
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'preview'
 const rand = () => Math.random().toString(36).slice(2, 7)

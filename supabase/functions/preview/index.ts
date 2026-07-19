@@ -95,7 +95,8 @@ Deno.serve(async (req: Request) => {
     if (form.get("_action") === "decide") {
       const status = form.get("status") === "approved" ? "approved" : "changes";
       await supa.from("previews").update({ status, decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("slug", slug);
-      return new Response(null, { status: 303, headers: { Location: `${url.pathname}?p=${slug}` } });
+      // Relative redirect so it works whether served at supabase.co/... or proxied at relay.sitestac.com/preview.
+      return new Response(null, { status: 303, headers: { Location: `?p=${slug}` } });
     }
     const entered = String(form.get("email") ?? "").trim();
     if (email && entered.toLowerCase() === email.toLowerCase()) {
@@ -103,8 +104,8 @@ Deno.serve(async (req: Request) => {
       return new Response(null, {
         status: 303,
         headers: {
-          Location: `${url.pathname}?p=${slug}`,
-          "Set-Cookie": `${cookieName}=${encodeURIComponent(val)}; HttpOnly; Secure; SameSite=Lax; Path=/functions/v1/preview; Max-Age=1209600`,
+          Location: `?p=${slug}`,
+          "Set-Cookie": `${cookieName}=${encodeURIComponent(val)}; HttpOnly; Secure; SameSite=Lax; Path=/preview; Max-Age=1209600`,
         },
       });
     }
