@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
 import { pkg } from '../lib/catalog'
@@ -28,6 +28,34 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
   const [live, setLive] = useState(true)
   const [copied, setCopied] = useState(false)
   const shareUrl = slug ? `${FN_BASE}?p=${slug}` : ''
+
+  // Restore the saved draft + any published share link for this deal on mount.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data: draft } = await supabase.from('preview_drafts')
+        .select('html,external_url').eq('deal_id', deal.id).maybeSingle()
+      if (!cancelled && draft) {
+        if (draft.html) { setHtml(draft.html); setActiveUrl(null) }
+        else if (draft.external_url) { setActiveUrl(draft.external_url); setHtml(null) }
+      }
+      const { data: pubs } = await supabase.from('previews')
+        .select('slug,active').eq('deal_id', deal.id).order('published_at', { ascending: false }).limit(1)
+      const pub = pubs?.[0] as { slug: string; active: boolean } | undefined
+      if (!cancelled && pub) { setSlug(pub.slug); setLive(pub.active) }
+    })()
+    return () => { cancelled = true }
+  }, [deal.id])
+
+  // Persist the working preview so it survives a refresh.
+  async function saveDraft(fields: { html?: string | null; external_url?: string | null }) {
+    if (!profile?.org_id) return
+    await supabase.from('preview_drafts').upsert({
+      deal_id: deal.id, org_id: profile.org_id,
+      html: fields.html ?? null, external_url: fields.external_url ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'deal_id' })
+  }
 
   async function publish() {
     if (!profile?.org_id) { setErr('No workspace found.'); return }
@@ -93,6 +121,7 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
       if (data?.error) throw new Error(data.error)
       if (!data?.html) throw new Error('No HTML returned.')
       setHtml(data.html)
+      saveDraft({ html: data.html })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Generation failed. Is the Edge Function deployed with an API key?')
     } finally {
@@ -104,15 +133,21 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () => { setHtml(String(reader.result)); setActiveUrl(null); setErr(null) }
+    reader.onload = () => {
+      const content = String(reader.result)
+      setHtml(content); setActiveUrl(null); setErr(null)
+      saveDraft({ html: content })
+    }
     reader.readAsText(file)
   }
 
   function loadUrl() {
     const u = url.trim()
     if (!u) return
-    setActiveUrl(/^https?:\/\//i.test(u) ? u : `https://${u}`)
+    const full = /^https?:\/\//i.test(u) ? u : `https://${u}`
+    setActiveUrl(full)
     setHtml(null); setErr(null)
+    saveDraft({ external_url: full })
   }
 
   const hasPreview = html !== null || activeUrl !== null
