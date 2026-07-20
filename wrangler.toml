@@ -12,5 +12,6 @@ directory = "./dist"
 binding = "ASSETS"
 # SPA fallback: serve index.html for any unmatched path so React Router handles routing.
 not_found_handling = "single-page-application"
-# Run the Worker before static-asset serving so /preview can be proxied.
-run_worker_first = true
+# Run the Worker FIRST for /preview so browser navigations are proxied to Supabase
+# instead of being caught by the SPA fallback. (Boolean `true` didn't cover navigations.)
+run_worker_first = ["/preview", "/preview/*"]
