@@ -92,6 +92,17 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
     }
   }
 
+  async function removePreview() {
+    if (!confirm('Remove this preview? Clears the uploaded site and disables the share link.')) return
+    setHtml(null); setActiveUrl(null); setUrl(''); setErr(null)
+    await supabase.from('preview_drafts').delete().eq('deal_id', deal.id)
+    if (slug) {
+      await supabase.storage.from('previews').remove([`${slug}.html`])
+      await supabase.from('previews').delete().eq('slug', slug)
+      setSlug(null); setCode(null); setViews(null); setLive(true)
+    }
+  }
+
   async function toggleLive() {
     if (!slug) return
     const next = !live
@@ -193,9 +204,10 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
                 {d === 'desktop' ? 'Desktop' : 'Mobile'}
               </button>
             ))}
-            {html !== null && (
-              <button onClick={download} style={{ ...toggleBtn, marginLeft: 'auto' }}>⬇ Export HTML</button>
-            )}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {html !== null && <button onClick={download} style={toggleBtn}>⬇ Export HTML</button>}
+              <button onClick={removePreview} style={{ ...toggleBtn, color: '#c0392b', borderColor: 'var(--line)' }}>Remove</button>
+            </div>
           </div>
           <div style={{ display: 'grid', placeItems: 'center', background: 'var(--rail)', border: '1px solid var(--line)', borderRadius: 12, padding: device === 'mobile' ? 12 : 0, overflow: 'hidden' }}>
             <iframe
