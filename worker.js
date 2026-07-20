@@ -1,13 +1,16 @@
 // Cloudflare Worker for Relay.
-// Serves the built SPA from static assets, and proxies /preview* to the Supabase
-// `preview` edge function so the client-facing share link is on relay.sitestac.com
-// instead of a supabase.co URL (hides where the site was built + looks branded).
+// Proxies /preview* to the Supabase `preview` edge function (so the client-facing
+// share link is on relay.sitestac.com, not supabase.co), and serves the SPA for
+// everything else. SPA fallback is handled HERE rather than via Cloudflare's
+// not_found_handling — otherwise that fallback intercepts browser *navigations* to
+// /preview and serves index.html before the Worker runs.
 
 const PREVIEW_FN = 'https://hifuypelxeryqqrfhapx.supabase.co/functions/v1/preview'
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
+
     if (url.pathname === '/preview' || url.pathname.startsWith('/preview/')) {
       const fwd = new Headers(request.headers)
       fwd.delete('accept-encoding') // avoid content-encoding mismatch when we re-emit
@@ -17,7 +20,6 @@ export default {
         body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
         redirect: 'manual', // let the client's browser follow 303s + store the cookie
       })
-
       // Supabase serves edge-function HTML as text/plain + a sandbox CSP (anti-phishing).
       // On our own domain we rewrite it so the browser actually renders the preview.
       const headers = new Headers(upstream.headers)
@@ -28,6 +30,12 @@ export default {
       headers.delete('x-content-type-options')
       return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers })
     }
-    return env.ASSETS.fetch(request)
+
+    // Static asset, or SPA fallback to index.html for client-side routes.
+    const res = await env.ASSETS.fetch(request)
+    if (res.status === 404) {
+      return env.ASSETS.fetch(new Request(new URL('/index.html', url.origin).toString(), { method: 'GET' }))
+    }
+    return res
   },
 }

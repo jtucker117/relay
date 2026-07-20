@@ -1,7 +1,9 @@
 # Cloudflare Worker config for Relay (Vite/React SPA + a small proxy Worker).
 # `npm run build` outputs static files to ./dist, served as Workers Static Assets.
-# The Worker (worker.js) runs first so it can proxy /preview* to the Supabase
-# preview function; everything else is served from ./dist (SPA fallback).
+# The Worker (worker.js) runs for every request: it proxies /preview* to the Supabase
+# preview function, and serves the SPA (with its own index.html fallback) for the rest.
+# NOTE: no `not_found_handling` — Cloudflare's SPA fallback would intercept browser
+# navigations to /preview before the Worker; we do the fallback in worker.js instead.
 # Served at relay.sitestac.com (custom domain added in the Cloudflare dashboard).
 name = "relay"
 main = "worker.js"
@@ -10,8 +12,3 @@ compatibility_date = "2025-06-01"
 [assets]
 directory = "./dist"
 binding = "ASSETS"
-# SPA fallback: serve index.html for any unmatched path so React Router handles routing.
-not_found_handling = "single-page-application"
-# Run the Worker FIRST for /preview so browser navigations are proxied to Supabase
-# instead of being caught by the SPA fallback. (Boolean `true` didn't cover navigations.)
-run_worker_first = ["/preview", "/preview/*"]
