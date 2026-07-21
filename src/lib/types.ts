@@ -31,6 +31,8 @@ export interface Lead {
   site_verdict: SiteVerdict | null
   site_reason: string | null
   socials: SocialLink[] | null
+  // Set once this lead has been converted into a pipeline deal (migration 014).
+  deal_id: string | null
   lat: number | null
   lng: number | null
   source: LeadSource

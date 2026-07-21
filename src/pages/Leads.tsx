@@ -3,6 +3,7 @@ import { Loader } from '@googlemaps/js-api-loader'
 import Screen from '../components/Screen'
 import Icon from '../components/Icon'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../auth/AuthProvider'
 import type { Lead, LeadStatus } from '../lib/types'
 import { US_STATES } from '../lib/catalog'
 
@@ -53,6 +54,7 @@ const SORTS: Record<SortKey, { label: string; cmp: (a: Lead, b: Lead) => number 
 }
 
 export default function Leads() {
+  const { profile } = useAuth()
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -214,6 +216,51 @@ export default function Leads() {
     setSelected(new Set())
   }
 
+  // Turn leads into pipeline deals. Everything the search already learned about the
+  // business — its old site, socials and trade — rides along, so the builder doesn't
+  // have to go find it again. Leads already converted are skipped, not duplicated.
+  async function convertToPipeline(rows: Lead[]) {
+    if (!profile?.org_id) { setErr('No workspace found.'); return }
+    const fresh = rows.filter((l) => !l.deal_id)
+    const already = rows.length - fresh.length
+    if (!fresh.length) {
+      setLiveMsg(already ? 'Already in the pipeline.' : 'Nothing to convert.')
+      return
+    }
+    setBulkBusy(true)
+    const payload = fresh.map((l) => ({
+      org_id: profile.org_id,
+      company: l.name,
+      name: l.category ? `${l.category} website` : 'New website',
+      contact: '', email: '',
+      phone: l.phone,
+      website: l.website,
+      socials: (l.socials ?? []).map((s) => s.url).join('\n') || null,
+      industry: l.category,
+      package_id: 'one', addons: [], stage: 'lead',
+      source: 'Leads board',
+      // Carry the address and outreach notes over as the starting brief context.
+      notes: [l.address, l.notes].filter(Boolean).join('\n'),
+      brief: null,
+    }))
+    const { data, error } = await supabase.from('deals').insert(payload).select('id')
+    if (error) { setBulkBusy(false); setErr(error.message); return }
+
+    // Link each lead to its new deal so the board can show it and we never double-convert.
+    const ids = (data as { id: string }[] | null) ?? []
+    await Promise.all(fresh.map((l, i) => ids[i]
+      ? supabase.from('leads').update({ deal_id: ids[i].id, status: 'interested' }).eq('id', l.id)
+      : Promise.resolve()))
+    const linked = new Map(fresh.map((l, i) => [l.id, ids[i]?.id ?? null]))
+    setLeads((prev) => prev.map((l) => (linked.has(l.id)
+      ? { ...l, deal_id: linked.get(l.id) ?? null, status: 'interested' as LeadStatus }
+      : l)))
+    setOpen((o) => (o && linked.has(o.id) ? { ...o, deal_id: linked.get(o.id) ?? null, status: 'interested' } : o))
+    setSelected(new Set())
+    setBulkBusy(false)
+    setLiveMsg(`Added ${fresh.length} to the pipeline${already ? ` (${already} already there)` : ''}. Open Pipeline to work them.`)
+  }
+
   function exportCsv() {
     const cols: (keyof Lead)[] = ['name', 'category', 'area', 'state', 'phone', 'address', 'zip',
       'rating', 'reviews', 'site_verdict', 'site_reason', 'website', 'status', 'contacted_on', 'notes', 'source', 'lat', 'lng']
@@ -316,7 +363,16 @@ export default function Leads() {
         </>
       }
     >
-      {open && <OutreachDrawer lead={open} onClose={() => setOpen(null)} onPatch={patch} onRemove={remove} />}
+      {open && (
+        <OutreachDrawer
+          lead={open}
+          onClose={() => setOpen(null)}
+          onPatch={patch}
+          onRemove={remove}
+          onConvert={(l) => convertToPipeline([l])}
+          converting={bulkBusy}
+        />
+      )}
       {showAdd && <AddLead onClose={() => setShowAdd(false)} onCreated={load} />}
 
       {liveResultIds && (
@@ -378,6 +434,13 @@ export default function Leads() {
           </button>
           <button onClick={() => setSelected(new Set())} style={bulkGhost}>Clear</button>
           <span style={{ flex: 1 }} />
+          <button
+            onClick={() => convertToPipeline(filtered.filter((l) => selected.has(l.id)))}
+            disabled={bulkBusy}
+            style={bulkPrimary}
+          >
+            → Add to pipeline
+          </button>
           <button onClick={() => markSelected('unfit')} disabled={bulkBusy} style={bulkGhost}>Mark unfit</button>
           <button onClick={deleteSelected} disabled={bulkBusy} style={bulkDanger}>
             {bulkBusy ? 'Working…' : `Delete ${selected.size}`}
@@ -423,6 +486,7 @@ export default function Leads() {
                     {l.area && <span style={metaChip}>{l.area}</span>}
                     {l.rating != null && <span style={{ fontSize: 12.5, color: 'var(--ink-soft)' }} className="num">★ {l.rating} · {l.reviews ?? 0}</span>}
                     <VerdictBadge lead={l} />
+                    {l.deal_id && <span style={pipelineBadge}>In pipeline</span>}
                     {(l.socials ?? []).length > 0 && (
                       <span style={metaChip} title={(l.socials ?? []).map((s) => s.url).join('\n')}>
                         {(l.socials ?? []).map((s) => SOCIAL_ICON[s.platform] ?? '🔗').join(' ')}
@@ -547,11 +611,13 @@ function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }
 }
 
 // ---- Outreach slide-over ----
-function OutreachDrawer({ lead, onClose, onPatch, onRemove }: {
+function OutreachDrawer({ lead, onClose, onPatch, onRemove, onConvert, converting }: {
   lead: Lead
   onClose: () => void
   onPatch: (id: string, f: Partial<Lead>) => Promise<boolean>
   onRemove: (id: string) => void
+  onConvert: (lead: Lead) => void
+  converting: boolean
 }) {
   const [notes, setNotes] = useState(lead.notes ?? '')
   const [contacted, setContacted] = useState(lead.contacted_on ?? '')
@@ -659,6 +725,14 @@ function OutreachDrawer({ lead, onClose, onPatch, onRemove }: {
           <button onClick={save} disabled={!dirty || saving} style={{ ...addBtn, opacity: !dirty || saving ? 0.5 : 1 }}>
             {saving ? 'Saving…' : 'Save'}
           </button>
+          {lead.deal_id
+            ? <span style={{ ...pipelineBadge, padding: '7px 12px' }}>✓ In pipeline</span>
+            : (
+              <button onClick={() => onConvert(lead)} disabled={converting} style={convertBtn}>
+                {converting ? 'Adding…' : '→ Add to pipeline'}
+              </button>
+            )}
+          <span style={{ flex: 1 }} />
           <button onClick={() => { if (confirm(`Remove ${lead.name} from the lead pool?`)) onRemove(lead.id) }}
             style={dangerBtn}>Delete lead</button>
         </div>
@@ -825,9 +899,21 @@ const bulkGhost: React.CSSProperties = {
   padding: '6px 12px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--panel)',
   color: 'var(--ink)', fontWeight: 500, fontSize: 13, cursor: 'pointer',
 }
+const bulkPrimary: React.CSSProperties = {
+  padding: '6px 14px', border: 'none', borderRadius: 8, background: 'var(--accent)',
+  color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+}
 const bulkDanger: React.CSSProperties = {
   padding: '6px 14px', border: 'none', borderRadius: 8, background: '#C0392B',
   color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+}
+const convertBtn: React.CSSProperties = {
+  padding: '8px 14px', border: 'none', borderRadius: 9, background: 'var(--accent)',
+  color: '#fff', fontWeight: 600, fontSize: 13.5, cursor: 'pointer',
+}
+const pipelineBadge: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-light)',
+  padding: '2px 8px', borderRadius: 6,
 }
 const cardSelected: React.CSSProperties = {
   borderColor: 'var(--accent)', boxShadow: '0 0 0 2px var(--accent-light)',
