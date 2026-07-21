@@ -21,6 +21,8 @@ const STATUS: { id: LeadStatus; label: string; color: string }[] = [
   { id: 'unfit', label: 'Unfit', color: '#9A9AA0' },
 ]
 const statusMeta = (id: LeadStatus) => STATUS.find((s) => s.id === id) ?? STATUS[0]
+// Where the map sits before it has pins to fit: the Magnolia / Woodlands service area.
+const HOME_VIEW = { center: { lat: 30.19, lng: -95.62 }, zoom: 11 }
 const todayISO = () => new Date().toISOString().slice(0, 10)
 
 type SortKey = 'prospect' | 'reviews' | 'rating' | 'name' | 'area' | 'contacted'
@@ -371,8 +373,8 @@ function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }
       .then(() => {
         if (cancelled || !el.current) return
         mapRef.current = new google.maps.Map(el.current, {
-          center: { lat: 30.19, lng: -95.62 }, // Magnolia / Woodlands area
-          zoom: 11,
+          center: HOME_VIEW.center,
+          zoom: HOME_VIEW.zoom,
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: false,
@@ -407,9 +409,17 @@ function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }
     // Only re-fit the viewport when the SET of pins changes — not when a pin just
     // recolors (status change) — so the dot visibly changes color without the map jumping.
     const sig = pts.map((p) => p.id).join(',')
-    if (pts.length && sig !== lastFitRef.current) {
-      map.fitBounds(bounds, 40)
-      if (pts.length === 1) map.setZoom(13)
+    if (sig !== lastFitRef.current) {
+      if (pts.length) {
+        map.fitBounds(bounds, 40)
+        if (pts.length === 1) map.setZoom(13)
+      } else {
+        // Nothing to show. Snap back to the home area rather than keeping the previous
+        // filter's viewport — a leftover nationwide view reads as "results from everywhere"
+        // when the real answer is "these leads have no coordinates".
+        map.setCenter(HOME_VIEW.center)
+        map.setZoom(HOME_VIEW.zoom)
+      }
       lastFitRef.current = sig
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -429,7 +439,13 @@ function LeadMap({ leads, onPick }: { leads: Lead[]; onPick: (l: Lead) => void }
   return (
     <div style={mapWrap}>
       <div ref={el} style={{ height: 380, width: '100%', background: 'var(--rail)' }} />
-      {state === 'ready' && <div style={mappedBadge}>{pts.length} of {leads.length} mapped</div>}
+      {state === 'ready' && (
+        <div style={mappedBadge}>
+          {pts.length === 0 && leads.length > 0
+            ? `No map coordinates for ${leads.length === 1 ? 'this lead' : 'these leads'}`
+            : `${pts.length} of ${leads.length} mapped`}
+        </div>
+      )}
     </div>
   )
 }
