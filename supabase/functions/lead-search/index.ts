@@ -22,6 +22,8 @@
 //            referrer-restricted browser Maps key; enable "Places API (New)")
 //          supabase secrets set ANTHROPIC_API_KEY=sk-ant-...   (fallback only)
 
+const BUILD = "2026-07-21d";
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -297,6 +299,11 @@ const FIELD_MASK = [
   "nextPageToken",
 ].join(",");
 
+// Human-readable category labels Google puts on geographic results. Belt and braces for
+// when the machine `types` are missing or unfamiliar — a lead whose category reads
+// "Postal Code" is never a business worth calling.
+const GEO_LABEL_RE = /^(postal code|zip code|locality|town|city|village|county|state|province|country|neighborhood|neighbourhood|route|street|road|highway|region|administrative|political|plus code|geographical)/i;
+
 // Is this result an actual business, or a place/road/city Google threw in?
 function isBusiness(p: Record<string, unknown>, areaName: string | null): boolean {
   const types: string[] = (p.types as string[]) ?? [];
@@ -304,8 +311,13 @@ function isBusiness(p: Record<string, unknown>, areaName: string | null): boolea
   // Any geographic type at all disqualifies it — businesses never carry `locality`.
   if (types.some((t) => GEO_TYPES.has(t))) return false;
   if (primary && GEO_TYPES.has(primary)) return false;
+  const label = (p.primaryTypeDisplayName as { text?: string })?.text ?? "";
+  if (label && GEO_LABEL_RE.test(label.trim())) return false;
   const name = ((p.displayName as { text?: string })?.text ?? "").trim();
   if (!name) return false;
+  // A "business" called 77354 is a ZIP code. No real business name is only digits,
+  // punctuation, or a bare ZIP+4.
+  if (/^[\d\s\-.,#]+$/.test(name)) return false;
   // "Cleveland" the lead was literally the town's own name.
   if (areaName && name.toLowerCase() === areaName.toLowerCase().split(",")[0].trim()) return false;
   // A real listing has either a business category or some trace of customers. A brand-new
@@ -445,6 +457,9 @@ async function searchClaude(apiKey: string, query: string): Promise<Lead[]> {
     if (!name) return null;
     // Same guard as the Places path: the model sometimes returns the town itself.
     if (name.toLowerCase() === place) return null;
+    if (/^[\d\s\-.,#]+$/.test(name)) return null;   // a ZIP is not a business
+    const catLabel = r.category ? String(r.category) : "";
+    if (catLabel && GEO_LABEL_RE.test(catLabel.trim())) return null;
     const zip = r.zip ? String(r.zip).trim() : null;
     const area = r.area ? String(r.area).trim() : null;
     const website = r.website ? String(r.website).trim() : null;
@@ -605,6 +620,7 @@ Deno.serve(async (req: Request) => {
       scanned: unique.length,
       prospects: prospects.length,
       area,
+      build: BUILD,
       state: stateCode,
       outOfState: dropped,
       probed: probing.length,

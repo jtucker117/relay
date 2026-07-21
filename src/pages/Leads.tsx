@@ -78,6 +78,9 @@ export default function Leads() {
   const [searchState, setSearchState] = useState<string>(() => localStorage.getItem('relay.searchState') ?? 'TX')
   useEffect(() => { localStorage.setItem('relay.searchState', searchState) }, [searchState])
   const [liveNote, setLiveNote] = useState<string | null>(null)
+  // Bulk selection. Held as ids so it survives re-sorts and re-filters.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   // Leave the live-search result view and return to normal filtering.
   const clearLive = useCallback(() => { setLiveResultIds(null); setLiveMsg(null) }, [])
@@ -92,47 +95,59 @@ export default function Leads() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  // Towns you actually have leads in, busiest first — after a few live searches this list
-  // runs to 60+ places and alphabetical order buries the ones being worked.
-  const areas = useMemo(() => {
-    const c = new Map<string, number>()
-    for (const l of leads) if (l.area) c.set(l.area, (c.get(l.area) ?? 0) + 1)
-    return [...c.entries()]
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-  }, [leads])
-  const cats = useMemo(
-    () => Array.from(new Set(leads.map((l) => l.category).filter(Boolean))).sort() as string[],
-    [leads],
+  // ---- One filter model, so every number on screen means the same thing ----
+  //
+  // `base` is what we're filtering: the pinned results after a live search, otherwise the
+  // whole board. Each filter is a predicate, and every count is computed over base with
+  // all the OTHER filters applied. That's what makes the numbers honest — the count on an
+  // option is exactly how many rows you get if you pick it. Previously the Area count was
+  // "all leads in Magnolia" while the list showed a live-search slice, and the status chips
+  // read 0 while 40 rows sat below them.
+  const base = useMemo(() => {
+    if (!liveResultIds) return leads
+    const set = new Set(liveResultIds)
+    return leads.filter((l) => set.has(l.id))
+  }, [leads, liveResultIds])
+
+  // After a live search the box holds the QUERY ("ac repair in 77354"), not a board filter —
+  // matching it against lead names would blank the very results we just fetched.
+  const text = liveResultIds ? '' : q.trim().toLowerCase()
+  const matchText = useCallback((l: Lead) => !text ||
+    [l.name, l.category, l.address, l.phone].some((v) => (v ?? '').toLowerCase().includes(text)), [text])
+  const matchArea = useCallback((l: Lead) => area === 'all' || l.area === area, [area])
+  const matchCat = useCallback((l: Lead) => cat === 'all' || l.category === cat, [cat])
+  const matchStatus = useCallback((l: Lead) => status === 'all' || l.status === status, [status])
+
+  const filtered = useMemo(
+    () => base.filter((l) => matchText(l) && matchArea(l) && matchCat(l) && matchStatus(l)).sort(SORTS[sort].cmp),
+    [base, matchText, matchArea, matchCat, matchStatus, sort],
   )
 
-  // Everything except the status filter — drives the status-chip counts.
-  const scoped = useMemo(() => {
-    const t = q.trim().toLowerCase()
-    return leads.filter((l) => {
-      if (area !== 'all' && l.area !== area) return false
-      if (cat !== 'all' && l.category !== cat) return false
-      if (!t) return true
-      return [l.name, l.category, l.address, l.phone].some((v) => (v ?? '').toLowerCase().includes(t))
-    })
-  }, [leads, q, area, cat])
-
-  const filtered = useMemo(() => {
-    let rows: Lead[]
-    if (liveResultIds) {
-      const set = new Set(liveResultIds)
-      rows = leads.filter((l) => set.has(l.id)) // show exactly the live-search results
-    } else {
-      rows = status === 'all' ? scoped : scoped.filter((l) => l.status === status)
-    }
-    return [...rows].sort(SORTS[sort].cmp)
-  }, [scoped, leads, liveResultIds, status, sort])
-
+  // Facet counts: every filter counted against the others, never against the raw board.
+  const tally = (rows: Lead[], key: (l: Lead) => string | null) => {
+    const c = new Map<string, number>()
+    for (const l of rows) { const k = key(l); if (k) c.set(k, (c.get(k) ?? 0) + 1) }
+    return c
+  }
+  const areas = useMemo(() => {
+    const c = tally(base.filter((l) => matchText(l) && matchCat(l) && matchStatus(l)), (l) => l.area)
+    return [...c.entries()].map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [base, matchText, matchCat, matchStatus])
+  const cats = useMemo(() => {
+    const c = tally(base.filter((l) => matchText(l) && matchArea(l) && matchStatus(l)), (l) => l.category)
+    return [...c.entries()].map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [base, matchText, matchArea, matchStatus])
+  const statusPool = useMemo(
+    () => base.filter((l) => matchText(l) && matchArea(l) && matchCat(l)),
+    [base, matchText, matchArea, matchCat],
+  )
   const counts = useMemo(() => {
     const c: Record<string, number> = {}
-    for (const l of scoped) c[l.status] = (c[l.status] ?? 0) + 1
+    for (const l of statusPool) c[l.status] = (c[l.status] ?? 0) + 1
     return c
-  }, [scoped])
+  }, [statusPool])
 
   // Keep the open lead on the map even if the current filter would hide it, so changing
   // its status recolors its dot in place rather than making the pin disappear.
@@ -155,6 +170,48 @@ export default function Leads() {
     if (error) { setErr(error.message); return }
     setLeads((prev) => prev.filter((l) => l.id !== id))
     setOpen(null)
+  }
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }, [])
+
+  // Delete every selected lead in one request. Destructive and not undoable, so it
+  // confirms with the count first.
+  async function deleteSelected() {
+    const ids = [...selected]
+    if (!ids.length) return
+    const msg = ids.length === 1
+      ? 'Delete this lead? This cannot be undone.'
+      : `Delete these ${ids.length} leads? This cannot be undone.`
+    if (!window.confirm(msg)) return
+    setBulkBusy(true)
+    const { error } = await supabase.from('leads').delete().in('id', ids)
+    setBulkBusy(false)
+    if (error) { setErr(error.message); return }
+    const gone = new Set(ids)
+    setLeads((prev) => prev.filter((l) => !gone.has(l.id)))
+    setLiveResultIds((prev) => (prev ? prev.filter((id) => !gone.has(id)) : prev))
+    setSelected(new Set())
+    setOpen((o) => (o && gone.has(o.id) ? null : o))
+  }
+
+  // Bulk status change — marking a batch 'unfit' is how you clear chaff without losing
+  // the record that you already looked at them.
+  async function markSelected(next: LeadStatus) {
+    const ids = [...selected]
+    if (!ids.length) return
+    setBulkBusy(true)
+    const { error } = await supabase.from('leads').update({ status: next }).in('id', ids)
+    setBulkBusy(false)
+    if (error) { setErr(error.message); return }
+    const hit = new Set(ids)
+    setLeads((prev) => prev.map((l) => (hit.has(l.id) ? { ...l, status: next } : l)))
+    setSelected(new Set())
   }
 
   function exportCsv() {
@@ -185,7 +242,7 @@ export default function Leads() {
         body: { query, onlyProspects, industry: cat === 'all' ? null : cat, state: searchState },
       })
       if (error) throw error
-      const res = data as { leads?: Lead[]; scanned?: number; prospects?: number; area?: string | null; withSocials?: number; outOfState?: number; state?: string } | null
+      const res = data as { leads?: Lead[]; scanned?: number; prospects?: number; area?: string | null; withSocials?: number; outOfState?: number; state?: string; build?: string } | null
       const found = res?.leads ?? []
       // De-dupe by id before upsert (Postgres rejects the same id twice in one upsert).
       const byId = new Map(found.filter((f) => f?.id).map((f) => [f.id, { ...f, source: 'live' as const }]))
@@ -203,12 +260,18 @@ export default function Leads() {
 
       const ids = (saved as { id: string }[] | null)?.map((r) => r.id) ?? rows.map((r) => r.id)
       await load()
+      // Drop any leftover filters — a stale Area/Industry/status from the last session
+      // would silently hide the results we just paid Google for.
+      setArea('all'); setCat('all'); setStatus('all')
       setLiveResultIds(ids)   // pin the board to just these results
       setLiveQuery(query)
       setLiveMsg(null)
       const bits = [`scanned ${res?.scanned ?? rows.length} businesses${res?.area ? ` in ${res.area}` : ''}`]
       if (res?.withSocials) bits.push(`${res.withSocials} with social profiles`)
       if (res?.outOfState) bits.push(`${res.outOfState} dropped outside ${res.state ?? searchState}`)
+      // Surfaces which build of the edge function answered — the only way to tell a stale
+      // deploy from a code bug without digging through Supabase logs.
+      if (res?.build) bits.push(`engine ${res.build}`)
       setLiveNote(bits.join(' · '))
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Live search failed.'
@@ -277,15 +340,15 @@ export default function Leads() {
         <label style={selectWrap}>
           <span style={{ color: 'var(--ink-muted)' }}>Area</span>
           <select value={area} onChange={(e) => { setArea(e.target.value); clearLive() }} style={select}>
-            <option value="all">All areas ({leads.length})</option>
+            <option value="all">All areas ({statusPool.length})</option>
             {areas.map((a) => <option key={a.name} value={a.name}>{a.name} ({a.count})</option>)}
           </select>
         </label>
         <label style={selectWrap}>
           <span style={{ color: 'var(--ink-muted)' }}>Industry</span>
           <select value={cat} onChange={(e) => { setCat(e.target.value); clearLive() }} style={select}>
-            <option value="all">All industries</option>
-            {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+            <option value="all">All industries ({statusPool.length})</option>
+            {cats.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.count})</option>)}
           </select>
         </label>
         <label style={selectWrap}>
@@ -298,13 +361,29 @@ export default function Leads() {
 
       {/* Status */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 14 }}>
-        <Chip active={status === 'all' && !liveResultIds} onClick={() => { setStatus('all'); clearLive() }}>All ({scoped.length})</Chip>
+        <Chip active={status === 'all'} onClick={() => setStatus('all')}>All ({statusPool.length})</Chip>
         {STATUS.map((s) => (
           <Chip key={s.id} active={status === s.id && !liveResultIds} onClick={() => { setStatus(s.id); clearLive() }} dot={s.color}>
             {s.label}{counts[s.id] ? ` ${counts[s.id]}` : ''}
           </Chip>
         ))}
       </div>
+
+      {/* Bulk actions — only present once something is picked, so it never adds noise. */}
+      {selected.size > 0 && (
+        <div style={bulkBar}>
+          <b>{selected.size} selected</b>
+          <button onClick={() => setSelected(new Set(filtered.map((l) => l.id)))} style={bulkGhost}>
+            Select all {filtered.length}
+          </button>
+          <button onClick={() => setSelected(new Set())} style={bulkGhost}>Clear</button>
+          <span style={{ flex: 1 }} />
+          <button onClick={() => markSelected('unfit')} disabled={bulkBusy} style={bulkGhost}>Mark unfit</button>
+          <button onClick={deleteSelected} disabled={bulkBusy} style={bulkDanger}>
+            {bulkBusy ? 'Working…' : `Delete ${selected.size}`}
+          </button>
+        </div>
+      )}
 
       {loading && <p style={{ color: 'var(--ink-soft)' }}>Loading leads…</p>}
       {err && <div style={errorBox}><b>Something went wrong.</b> {err}</div>}
@@ -317,9 +396,26 @@ export default function Leads() {
             {filtered.map((l) => {
               const m = statusMeta(l.status)
               return (
-                <div key={l.id} className="deal-card" style={card} onClick={() => setOpen(l)}>
+                <div
+                  key={l.id}
+                  className="deal-card"
+                  style={{ ...card, ...(selected.has(l.id) ? cardSelected : null) }}
+                  onClick={() => setOpen(l)}
+                >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                    <b style={{ fontSize: 14.5, lineHeight: 1.25 }}>{l.name}</b>
+                    <label
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: 'pointer' }}
+                      onClick={(e) => e.stopPropagation()}   // ticking a box must not open the drawer
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(l.id)}
+                        onChange={() => toggleSelect(l.id)}
+                        style={{ width: 15, height: 15, accentColor: 'var(--accent)', cursor: 'pointer', flexShrink: 0 }}
+                        aria-label={`Select ${l.name}`}
+                      />
+                      <b style={{ fontSize: 14.5, lineHeight: 1.25 }}>{l.name}</b>
+                    </label>
                     <span style={{ ...pill, color: m.color, background: 'color-mix(in srgb, ' + m.color + ' 14%, transparent)' }}>{m.label}</span>
                   </div>
                   {l.category && <div style={{ color: 'var(--ink-soft)', fontSize: 13, marginTop: 3 }}>{l.category}</div>}
@@ -719,6 +815,22 @@ const noSiteBadge: React.CSSProperties = {
 // Live-search toggle in its "on" state.
 const prospectOn: React.CSSProperties = {
   borderColor: 'var(--accent)', color: 'var(--accent)', fontWeight: 600,
+}
+const bulkBar: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12,
+  padding: '10px 14px', borderRadius: 11, background: 'var(--accent-light)',
+  border: '1px solid #DBD3FF', fontSize: 13.5,
+}
+const bulkGhost: React.CSSProperties = {
+  padding: '6px 12px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--panel)',
+  color: 'var(--ink)', fontWeight: 500, fontSize: 13, cursor: 'pointer',
+}
+const bulkDanger: React.CSSProperties = {
+  padding: '6px 14px', border: 'none', borderRadius: 8, background: '#C0392B',
+  color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+}
+const cardSelected: React.CSSProperties = {
+  borderColor: 'var(--accent)', boxShadow: '0 0 0 2px var(--accent-light)',
 }
 const stateSelect: React.CSSProperties = {
   padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 9, fontSize: 13,
