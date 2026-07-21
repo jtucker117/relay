@@ -90,10 +90,15 @@ export default function Leads() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  const areas = useMemo(
-    () => Array.from(new Set(leads.map((l) => l.area).filter(Boolean))).sort() as string[],
-    [leads],
-  )
+  // Towns you actually have leads in, busiest first — after a few live searches this list
+  // runs to 60+ places and alphabetical order buries the ones being worked.
+  const areas = useMemo(() => {
+    const c = new Map<string, number>()
+    for (const l of leads) if (l.area) c.set(l.area, (c.get(l.area) ?? 0) + 1)
+    return [...c.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [leads])
   const cats = useMemo(
     () => Array.from(new Set(leads.map((l) => l.category).filter(Boolean))).sort() as string[],
     [leads],
@@ -267,9 +272,13 @@ export default function Leads() {
 
       {/* Area + industry + sort */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-        <Chip active={area === 'all'} onClick={() => { setArea('all'); clearLive() }}>All areas</Chip>
-        {areas.map((a) => <Chip key={a} active={area === a} onClick={() => { setArea(a); clearLive() }}>{a}</Chip>)}
-        <span style={{ width: 1, height: 20, background: 'var(--line)', margin: '0 4px' }} />
+        <label style={selectWrap}>
+          <span style={{ color: 'var(--ink-muted)' }}>Area</span>
+          <select value={area} onChange={(e) => { setArea(e.target.value); clearLive() }} style={select}>
+            <option value="all">All areas ({leads.length})</option>
+            {areas.map((a) => <option key={a.name} value={a.name}>{a.name} ({a.count})</option>)}
+          </select>
+        </label>
         <label style={selectWrap}>
           <span style={{ color: 'var(--ink-muted)' }}>Industry</span>
           <select value={cat} onChange={(e) => { setCat(e.target.value); clearLive() }} style={select}>
