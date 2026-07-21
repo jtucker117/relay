@@ -22,9 +22,26 @@ const STATUS: { id: LeadStatus; label: string; color: string }[] = [
 const statusMeta = (id: LeadStatus) => STATUS.find((s) => s.id === id) ?? STATUS[0]
 const todayISO = () => new Date().toISOString().slice(0, 10)
 
-type SortKey = 'reviews' | 'rating' | 'name' | 'area' | 'contacted'
+type SortKey = 'prospect' | 'reviews' | 'rating' | 'name' | 'area' | 'contacted'
 const num = (v: number | null | undefined) => (v == null ? -1 : v)
+
+// How sellable a lead is, worst site first. `none` (no website at all) is the surest bet;
+// `modern` is someone who already has what we'd be selling. Anything we haven't classified
+// sits between the two — worth a look, but behind everything we've confirmed.
+const VERDICT_RANK: Record<string, number> = { none: 0, social: 1, builder: 2, stale: 3, unknown: 4, modern: 5 }
+export const prospectRank = (l: Lead) => {
+  if (l.site_verdict) return VERDICT_RANK[l.site_verdict] ?? 4
+  // Rows saved before site checks existed: fall back to what the URL alone tells us.
+  if (!l.website || !l.website.trim()) return VERDICT_RANK.none
+  return VERDICT_RANK.unknown
+}
+
 const SORTS: Record<SortKey, { label: string; cmp: (a: Lead, b: Lead) => number }> = {
+  // Default view: the businesses most likely to say yes, busiest first within each tier.
+  prospect: {
+    label: 'Best prospects (no website first)',
+    cmp: (a, b) => prospectRank(a) - prospectRank(b) || num(b.reviews) - num(a.reviews),
+  },
   reviews: { label: 'Most reviews', cmp: (a, b) => num(b.reviews) - num(a.reviews) },
   rating: { label: 'Highest rating', cmp: (a, b) => num(b.rating) - num(a.rating) || num(b.reviews) - num(a.reviews) },
   name: { label: 'Name (A–Z)', cmp: (a, b) => a.name.localeCompare(b.name) },
@@ -42,7 +59,7 @@ export default function Leads() {
   // worked leads stay accessible via the status chips.
   const [status, setStatus] = useState<LeadStatus | 'all'>('new')
   const [cat, setCat] = useState<string>('all')
-  const [sort, setSort] = useState<SortKey>('reviews')
+  const [sort, setSort] = useState<SortKey>('prospect')
   const [open, setOpen] = useState<Lead | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [liveMsg, setLiveMsg] = useState<string | null>(null)
@@ -51,6 +68,9 @@ export default function Leads() {
   // all visible regardless of the current text/area/status filters.
   const [liveResultIds, setLiveResultIds] = useState<string[] | null>(null)
   const [liveQuery, setLiveQuery] = useState('')
+  // The whole point of the board: only surface businesses we can actually sell a site to.
+  const [onlyProspects, setOnlyProspects] = useState(true)
+  const [liveNote, setLiveNote] = useState<string | null>(null)
 
   // Leave the live-search result view and return to normal filtering.
   const clearLive = useCallback(() => { setLiveResultIds(null); setLiveMsg(null) }, [])
@@ -147,15 +167,23 @@ export default function Leads() {
   async function liveSearch() {
     const query = q.trim()
     if (!query) { setLiveMsg('Type what to search for (e.g. "roofers in Conroe") then hit Live search.'); return }
-    setSearching(true); setLiveMsg(null); setLiveResultIds(null)
+    setSearching(true); setLiveMsg(null); setLiveResultIds(null); setLiveNote(null)
     try {
-      const { data, error } = await supabase.functions.invoke('lead-search', { body: { query } })
+      const { data, error } = await supabase.functions.invoke('lead-search', {
+        body: { query, onlyProspects, industry: cat === 'all' ? null : cat },
+      })
       if (error) throw error
-      const found = (data as { leads?: Lead[] } | null)?.leads ?? []
+      const res = data as { leads?: Lead[]; scanned?: number; prospects?: number; area?: string | null; withSocials?: number } | null
+      const found = res?.leads ?? []
       // De-dupe by id before upsert (Postgres rejects the same id twice in one upsert).
       const byId = new Map(found.filter((f) => f?.id).map((f) => [f.id, { ...f, source: 'live' as const }]))
       const rows = [...byId.values()]
-      if (!rows.length) { setLiveMsg('Live search ran but returned no businesses.'); return }
+      if (!rows.length) {
+        setLiveMsg(res?.scanned
+          ? `Checked ${res.scanned} businesses${res.area ? ` in ${res.area}` : ''} — every one already has a decent site. Turn off “Only no-site & outdated” to see them.`
+          : `Live search found no businesses${res?.area ? ` in ${res.area}` : ''}. Try a nearby town or a specific trade, e.g. “roofers in Conroe”.`)
+        return
+      }
 
       const { data: saved, error: upErr } = await supabase
         .from('leads').upsert(rows, { onConflict: 'id' }).select('id')
@@ -166,6 +194,9 @@ export default function Leads() {
       setLiveResultIds(ids)   // pin the board to just these results
       setLiveQuery(query)
       setLiveMsg(null)
+      const bits = [`scanned ${res?.scanned ?? rows.length} businesses${res?.area ? ` in ${res.area}` : ''}`]
+      if (res?.withSocials) bits.push(`${res.withSocials} with social profiles`)
+      setLiveNote(bits.join(' · '))
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Live search failed.'
       setLiveMsg(`Live search failed: ${msg}`)
@@ -184,6 +215,13 @@ export default function Leads() {
             <span style={{ color: 'var(--ink-muted)', display: 'flex' }}><Icon name="search" size={16} /></span>
             <input value={q} onChange={(e) => { setQ(e.target.value); clearLive() }} placeholder="Search name, category, address…" style={searchInput} />
           </div>
+          <button
+            onClick={() => setOnlyProspects((v) => !v)}
+            style={{ ...ghostBtn, ...(onlyProspects ? prospectOn : null) }}
+            title="Only return businesses with no website, a social page, a builder page, or a stale site"
+          >
+            {onlyProspects ? '◉' : '○'} No-site & outdated only
+          </button>
           <button onClick={liveSearch} disabled={searching} style={ghostBtn} title="Find new businesses via web search">
             🔍 {searching ? 'Searching…' : 'Live search'}
           </button>
@@ -201,6 +239,7 @@ export default function Leads() {
         <div style={noticeBox}>
           <span style={{ flex: 1 }}>
             Showing <b>{liveResultIds.length}</b> lead{liveResultIds.length !== 1 ? 's' : ''} from your search{liveQuery ? ` for “${liveQuery}”` : ''}. These are saved to your board.
+            {liveNote && <span style={{ color: 'var(--ink-muted)' }}> ({liveNote})</span>}
           </span>
           <button onClick={clearLive} style={noticeClose}>Show all leads</button>
         </div>
@@ -262,7 +301,12 @@ export default function Leads() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                     {l.area && <span style={metaChip}>{l.area}</span>}
                     {l.rating != null && <span style={{ fontSize: 12.5, color: 'var(--ink-soft)' }} className="num">★ {l.rating} · {l.reviews ?? 0}</span>}
-                    {!l.website && <span style={noSiteBadge}>No website</span>}
+                    <VerdictBadge lead={l} />
+                    {(l.socials ?? []).length > 0 && (
+                      <span style={metaChip} title={(l.socials ?? []).map((s) => s.url).join('\n')}>
+                        {(l.socials ?? []).map((s) => SOCIAL_ICON[s.platform] ?? '🔗').join(' ')}
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, fontSize: 12.5, color: 'var(--ink-muted)' }}>
                     <span>{l.phone ?? 'No phone'}</span>
@@ -419,7 +463,22 @@ function OutreachDrawer({ lead, onClose, onPatch, onRemove }: {
             {lead.website
               ? <a href={lead.website} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none', wordBreak: 'break-all' }}>{lead.website.replace(/^https?:\/\//, '')}</a>
               : <span style={{ color: 'var(--green)', fontWeight: 600 }}>None — strong prospect</span>}
+            {lead.site_reason && (
+              <div style={{ color: 'var(--ink-muted)', fontSize: 12.5, marginTop: 2 }}>{lead.site_reason}</div>
+            )}
           </Field>
+          {(lead.socials ?? []).length > 0 && (
+            <Field label="Social">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
+                {(lead.socials ?? []).map((s) => (
+                  <a key={s.url} href={s.url} target="_blank" rel="noreferrer"
+                    style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}>
+                    {SOCIAL_ICON[s.platform] ?? '🔗'} {s.platform} ↗
+                  </a>
+                ))}
+              </div>
+            </Field>
+          )}
           {lead.place_id && (
             <Field label="Google">
               <a href={`https://www.google.com/maps/place/?q=place_id:${lead.place_id}`} target="_blank" rel="noreferrer"
@@ -584,6 +643,32 @@ const card: React.CSSProperties = {
 const pill: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 7, whiteSpace: 'nowrap', flexShrink: 0,
 }
+export const SOCIAL_ICON: Record<string, string> = {
+  facebook: 'ⓕ', instagram: '◎', youtube: '▶', tiktok: '♪', linkedin: 'in', x: '𝕏', yelp: 'ⓨ',
+}
+// How each verdict reads on a card. Green = go get them; grey = already has a site.
+const VERDICT_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  none: { label: 'No website', color: 'var(--green)', bg: 'var(--green-bg)' },
+  social: { label: 'Social page only', color: '#8A5A00', bg: '#FDF3E0' },
+  builder: { label: 'Builder page', color: '#8A5A00', bg: '#FDF3E0' },
+  stale: { label: 'Outdated site', color: '#A03A2B', bg: '#FCEDEA' },
+  modern: { label: 'Has a site', color: 'var(--ink-muted)', bg: 'var(--rail)' },
+}
+// The reason lives in the tooltip so the card stays scannable — hover tells you WHY
+// we called a site outdated ("Copyright still says 2016") instead of asking for trust.
+function VerdictBadge({ lead }: { lead: Lead }) {
+  const key = lead.site_verdict ?? (!lead.website?.trim() ? 'none' : null)
+  if (!key) return null
+  const v = VERDICT_STYLE[key]
+  if (!v) return null
+  if (key === 'modern') return null   // not a prospect; no need to shout about it
+  return (
+    <span style={{ ...noSiteBadge, color: v.color, background: v.bg }} title={lead.site_reason ?? v.label}>
+      {v.label}
+    </span>
+  )
+}
+
 const metaChip: React.CSSProperties = {
   fontSize: 11.5, fontWeight: 500, color: 'var(--ink-soft)', background: 'var(--rail)',
   border: '1px solid var(--line-3)', padding: '2px 8px', borderRadius: 6,
@@ -591,6 +676,10 @@ const metaChip: React.CSSProperties = {
 const noSiteBadge: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, color: 'var(--green)', background: 'var(--green-bg)',
   padding: '2px 8px', borderRadius: 6,
+}
+// Live-search toggle in its "on" state.
+const prospectOn: React.CSSProperties = {
+  borderColor: 'var(--accent)', color: 'var(--accent)', fontWeight: 600,
 }
 const mapWrap: React.CSSProperties = {
   position: 'relative', background: 'var(--rail)', border: '1px solid var(--line-2)',

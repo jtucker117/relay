@@ -8,6 +8,10 @@ export type PackageId = 'one' | 'three' | 'multi'
 export type LeadStatus = 'new' | 'contacted' | 'followup' | 'interested' | 'won' | 'lost' | 'unfit'
 export type LeadSource = 'places' | 'manual' | 'live'
 
+// none = no website at all (best prospect) … modern = has a current site (not a prospect).
+export type SiteVerdict = 'none' | 'social' | 'builder' | 'stale' | 'modern'
+export interface SocialLink { platform: string; url: string }
+
 export interface Lead {
   id: string
   place_id: string | null
@@ -21,6 +25,11 @@ export interface Lead {
   reviews: number | null
   web_status: 'confirmed' | 'likely' | 'maybe'
   website: string | null
+  // Why this business is (or isn't) a prospect — set by the lead-search function after it
+  // actually fetches their homepage. See supabase/012_leads_site_quality.sql.
+  site_verdict: SiteVerdict | null
+  site_reason: string | null
+  socials: SocialLink[] | null
   lat: number | null
   lng: number | null
   source: LeadSource
