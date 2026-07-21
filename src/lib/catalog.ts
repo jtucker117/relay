@@ -81,6 +81,18 @@ export const PACKAGE_COLOR: Record<PackageId, string> = {
   multi: '#E0932E',
 }
 
+// Suggestions only — the industry field stays free text, this just speeds up typing
+// and keeps spelling consistent so "show me all the roofers" actually returns them all.
+export const INDUSTRIES = [
+  'HVAC', 'Roofing', 'Plumbing', 'Electrical', 'Landscaping / Lawn', 'Pest control',
+  'Cleaning', 'Painting', 'Flooring', 'Remodeling / General contractor', 'Concrete / Paving',
+  'Pressure washing', 'Tree service', 'Pool service', 'Garage doors', 'Fencing',
+  'Auto repair', 'Towing', 'Moving / Storage', 'Real estate', 'Insurance', 'Legal',
+  'Medical / Dental', 'Chiropractic', 'Salon / Barber', 'Spa / Massage', 'Fitness / Gym',
+  'Restaurant / Food', 'Catering', 'Events / Photography', 'Retail / E-commerce',
+  'Church / Nonprofit', 'Firearms / Outdoors', 'Other',
+]
+
 export const pkg = (id: PackageId) => PACKAGES.find((p) => p.id === id)!
 export const addon = (id: string) => ADDONS.find((a) => a.id === id)
 export const stage = (id: Stage) => STAGES.find((s) => s.id === id)!

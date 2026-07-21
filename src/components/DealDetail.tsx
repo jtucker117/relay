@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
-import { PACKAGES, ADDONS, STAGES, PACKAGE_COLOR, pkg, stage as stageDef } from '../lib/catalog'
+import { PACKAGES, ADDONS, STAGES, PACKAGE_COLOR, INDUSTRIES, pkg, stage as stageDef } from '../lib/catalog'
 import { dealTotals, money } from '../lib/money'
 import PreviewSection from './PreviewSection'
 import InvoiceModal from './InvoiceModal'
@@ -95,6 +95,21 @@ export default function DealDetail({ deal, onClose, onChange }: {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   <Field k="Contact"><b>{d.contact || '—'}</b><div style={muted}>{d.email || 'no email'}</div></Field>
                   <Field k="Source"><b>{d.source || '—'}</b><div style={muted}>Updated {timeAgo(d.updated_at)}</div></Field>
+                  <Field k="Industry"><b>{d.industry || '—'}</b></Field>
+                  <Field k="Current site">
+                    {d.website ? <a href={href(d.website)} target="_blank" rel="noreferrer" style={link}>{tidy(d.website)}</a> : <b>No site yet</b>}
+                  </Field>
+                  {d.socials && (
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <Field k="Socials">
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
+                          {socialList(d.socials).map((s) => (
+                            <a key={s} href={href(s)} target="_blank" rel="noreferrer" style={link}>{tidy(s)}</a>
+                          ))}
+                        </div>
+                      </Field>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -102,6 +117,17 @@ export default function DealDetail({ deal, onClose, onChange }: {
                   {mini('Email', d.email, (v) => setD({ ...d, email: v }), (v) => patch({ email: v }))}
                   {mini('Phone', d.phone ?? '', (v) => setD({ ...d, phone: v }), (v) => patch({ phone: v }))}
                   {mini('Source', d.source, (v) => setD({ ...d, source: v }), (v) => patch({ source: v }))}
+                  {mini('Industry', d.industry ?? '', (v) => setD({ ...d, industry: v }), (v) => patch({ industry: v || null }), INDUSTRIES)}
+                  {mini('Current website', d.website ?? '', (v) => setD({ ...d, website: v }), (v) => patch({ website: v || null }))}
+                  <label style={{ display: 'grid', gap: 3, gridColumn: '1 / -1' }}>
+                    <span style={fieldLabel}>Social links (one per line)</span>
+                    <textarea
+                      style={{ ...miniInput, minHeight: 58, resize: 'vertical', fontFamily: 'inherit' }}
+                      value={d.socials ?? ''}
+                      onChange={(e) => setD({ ...d, socials: e.target.value })}
+                      onBlur={(e) => patch({ socials: e.target.value || null })}
+                    />
+                  </label>
                 </div>
               )}
             </Card>
@@ -238,14 +264,24 @@ function Card({ label, action, accent, children }: { label: string; action?: Rea
 function Field({ k, children }: { k: string; children: ReactNode }) {
   return <div><div style={fieldLabel}>{k}</div><div style={{ marginTop: 3, fontSize: 14 }}>{children}</div></div>
 }
-function mini(labelText: string, value: string, onInput: (v: string) => void, onSave: (v: string) => void) {
+function mini(labelText: string, value: string, onInput: (v: string) => void, onSave: (v: string) => void, options?: string[]) {
+  const listId = options ? `dd-${labelText.replace(/\s+/g, '-').toLowerCase()}` : undefined
   return (
     <label style={{ display: 'grid', gap: 3 }}>
       <span style={fieldLabel}>{labelText}</span>
-      <input style={miniInput} value={value} onChange={(e) => onInput(e.target.value)} onBlur={(e) => onSave(e.target.value)} />
+      <input style={miniInput} value={value} list={listId} onChange={(e) => onInput(e.target.value)} onBlur={(e) => onSave(e.target.value)} />
+      {options && <datalist id={listId}>{options.map((o) => <option key={o} value={o} />)}</datalist>}
     </label>
   )
 }
+// Socials are stored as free text — one link per line is the convention, but tolerate
+// commas too since that's how people paste them.
+function socialList(raw: string): string[] {
+  return raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean)
+}
+// Salespeople type "greenlinelawn.com", not "https://…" — make it clickable anyway.
+const href = (url: string) => (/^https?:\/\//i.test(url) ? url : `https://${url}`)
+const tidy = (url: string) => url.replace(/^https?:\/\//i, '').replace(/\/$/, '')
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
   const d = Math.floor(diff / 86400000)
@@ -273,3 +309,4 @@ const miniInput: React.CSSProperties = { padding: '8px 10px', border: '1px solid
 const editBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: 8, padding: '5px 11px', fontSize: 12.5, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer' }
 const openInvoiceBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: 9, padding: '7px 13px', fontSize: 13, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer' }
 const closeBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', width: 34, height: 34, borderRadius: 9, fontSize: 20, cursor: 'pointer', color: 'var(--ink-soft)', lineHeight: 1 }
+const link: React.CSSProperties = { color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', wordBreak: 'break-all' }

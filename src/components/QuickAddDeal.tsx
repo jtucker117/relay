@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
-import { PACKAGES, STAGES } from '../lib/catalog'
+import { PACKAGES, STAGES, INDUSTRIES } from '../lib/catalog'
 import type { PackageId, Stage } from '../lib/types'
 
 // Quick-add a new deal/lead → inserts into Supabase (org-scoped via RLS).
@@ -14,6 +14,9 @@ export default function QuickAddDeal({ onClose, onCreated }: {
   const [name, setName] = useState('')
   const [contact, setContact] = useState('')
   const [email, setEmail] = useState('')
+  const [website, setWebsite] = useState('')
+  const [socials, setSocials] = useState('')
+  const [industry, setIndustry] = useState('')
   const [packageId, setPackageId] = useState<PackageId>('one')
   const [stage, setStage] = useState<Stage>('lead')
   const [source, setSource] = useState('Manual')
@@ -27,6 +30,9 @@ export default function QuickAddDeal({ onClose, onCreated }: {
     const { error } = await supabase.from('deals').insert({
       org_id: profile.org_id,
       company, name, contact, email,
+      website: website.trim() || null,
+      socials: socials.trim() || null,
+      industry: industry.trim() || null,
       package_id: packageId, addons: [], stage, source, notes: '', brief: null,
     })
     setBusy(false)
@@ -53,6 +59,27 @@ export default function QuickAddDeal({ onClose, onCreated }: {
             {field('Contact name', <input style={input} value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Dana Reyes" />)}
             {field('Contact email', <input style={input} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="dana@greenline.co" />)}
           </div>
+          {/* Research context — what a builder needs to start pulling reference sites. */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {field('Industry', (
+              <>
+                <input style={input} value={industry} onChange={(e) => setIndustry(e.target.value)} list="industry-options" placeholder="Roofing" />
+                <datalist id="industry-options">
+                  {INDUSTRIES.map((i) => <option key={i} value={i} />)}
+                </datalist>
+              </>
+            ))}
+            {field('Current website', <input style={input} type="url" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="greenlinelawn.com — or leave blank if none" />)}
+          </div>
+          {field('Social links', (
+            <textarea
+              style={{ ...input, minHeight: 62, resize: 'vertical' }}
+              value={socials}
+              onChange={(e) => setSocials(e.target.value)}
+              placeholder={'facebook.com/greenlinelawn\ninstagram.com/greenlinelawn'}
+            />
+          ))}
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             {field('Package', (
               <select style={input} value={packageId} onChange={(e) => setPackageId(e.target.value as PackageId)}>

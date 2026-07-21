@@ -67,6 +67,9 @@ export interface Deal {
   contact: string
   email: string
   phone?: string | null
+  website?: string | null
+  socials?: string | null
+  industry?: string | null
   package_id: PackageId
   addons: string[]
   stage: Stage
