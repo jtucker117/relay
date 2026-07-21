@@ -64,6 +64,9 @@ export default function Leads() {
   // worked leads stay accessible via the status chips.
   const [status, setStatus] = useState<LeadStatus | 'all'>('new')
   const [cat, setCat] = useState<string>('all')
+  // Board-side state filter. Separate from `searchState` — that fences what live search
+  // fetches, this narrows what you're looking at, including leads saved before the fence.
+  const [stateFilter, setStateFilter] = useState<string>('all')
   const [sort, setSort] = useState<SortKey>('prospect')
   const [open, setOpen] = useState<Lead | null>(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -119,10 +122,12 @@ export default function Leads() {
   const matchArea = useCallback((l: Lead) => area === 'all' || l.area === area, [area])
   const matchCat = useCallback((l: Lead) => cat === 'all' || l.category === cat, [cat])
   const matchStatus = useCallback((l: Lead) => status === 'all' || l.status === status, [status])
+  const matchState = useCallback((l: Lead) => stateFilter === 'all' || l.state === stateFilter, [stateFilter])
 
   const filtered = useMemo(
-    () => base.filter((l) => matchText(l) && matchArea(l) && matchCat(l) && matchStatus(l)).sort(SORTS[sort].cmp),
-    [base, matchText, matchArea, matchCat, matchStatus, sort],
+    () => base.filter((l) => matchText(l) && matchState(l) && matchArea(l) && matchCat(l) && matchStatus(l))
+      .sort(SORTS[sort].cmp),
+    [base, matchText, matchState, matchArea, matchCat, matchStatus, sort],
   )
 
   // Facet counts: every filter counted against the others, never against the raw board.
@@ -131,19 +136,24 @@ export default function Leads() {
     for (const l of rows) { const k = key(l); if (k) c.set(k, (c.get(k) ?? 0) + 1) }
     return c
   }
+  const states = useMemo(() => {
+    const c = tally(base.filter((l) => matchText(l) && matchArea(l) && matchCat(l) && matchStatus(l)), (l) => l.state)
+    return [...c.entries()].map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [base, matchText, matchArea, matchCat, matchStatus])
   const areas = useMemo(() => {
-    const c = tally(base.filter((l) => matchText(l) && matchCat(l) && matchStatus(l)), (l) => l.area)
+    const c = tally(base.filter((l) => matchText(l) && matchState(l) && matchCat(l) && matchStatus(l)), (l) => l.area)
     return [...c.entries()].map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-  }, [base, matchText, matchCat, matchStatus])
+  }, [base, matchText, matchState, matchCat, matchStatus])
   const cats = useMemo(() => {
-    const c = tally(base.filter((l) => matchText(l) && matchArea(l) && matchStatus(l)), (l) => l.category)
+    const c = tally(base.filter((l) => matchText(l) && matchState(l) && matchArea(l) && matchStatus(l)), (l) => l.category)
     return [...c.entries()].map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-  }, [base, matchText, matchArea, matchStatus])
+  }, [base, matchText, matchState, matchArea, matchStatus])
   const statusPool = useMemo(
-    () => base.filter((l) => matchText(l) && matchArea(l) && matchCat(l)),
-    [base, matchText, matchArea, matchCat],
+    () => base.filter((l) => matchText(l) && matchState(l) && matchArea(l) && matchCat(l)),
+    [base, matchText, matchState, matchArea, matchCat],
   )
   const counts = useMemo(() => {
     const c: Record<string, number> = {}
@@ -309,7 +319,7 @@ export default function Leads() {
       await load()
       // Drop any leftover filters — a stale Area/Industry/status from the last session
       // would silently hide the results we just paid Google for.
-      setArea('all'); setCat('all'); setStatus('all')
+      setArea('all'); setCat('all'); setStatus('all'); setStateFilter('all')
       setLiveResultIds(ids)   // pin the board to just these results
       setLiveQuery(query)
       setLiveMsg(null)
@@ -393,6 +403,13 @@ export default function Leads() {
 
       {/* Area + industry + sort */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+        <label style={selectWrap}>
+          <span style={{ color: 'var(--ink-muted)' }}>State</span>
+          <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} style={select}>
+            <option value="all">All states ({statusPool.length})</option>
+            {states.map((s) => <option key={s.name} value={s.name}>{s.name} ({s.count})</option>)}
+          </select>
+        </label>
         <label style={selectWrap}>
           <span style={{ color: 'var(--ink-muted)' }}>Area</span>
           <select value={area} onChange={(e) => { setArea(e.target.value); clearLive() }} style={select}>
