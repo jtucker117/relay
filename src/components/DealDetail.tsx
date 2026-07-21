@@ -18,6 +18,9 @@ export default function DealDetail({ deal, onClose, onChange }: {
   const [showInvoice, setShowInvoice] = useState(false)
   const [comments, setComments] = useState<Comment[]>([])
   const [draft, setDraft] = useState('')
+  // Which note is open for editing, and its working text.
+  const [editingNote, setEditingNote] = useState<string | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
 
   useEffect(() => { setD(deal) }, [deal])
 
@@ -43,6 +46,19 @@ export default function DealDetail({ deal, onClose, onChange }: {
     setDraft('')
     await supabase.from('comments').insert({ org_id: profile.org_id, deal_id: deal.id, author: profile.name, initials, text })
     loadComments()
+  }
+
+  async function saveNote(id: string) {
+    const text = noteDraft.trim()
+    if (!text) return
+    setEditingNote(null)
+    setComments((prev) => prev.map((c) => (c.id === id ? { ...c, text } : c)))
+    await supabase.from('comments').update({ text }).eq('id', id)
+  }
+  async function deleteNote(id: string) {
+    if (!confirm('Delete this note? This cannot be undone.')) return
+    setComments((prev) => prev.filter((c) => c.id !== id))
+    await supabase.from('comments').delete().eq('id', id)
   }
 
   const t = dealTotals(d)
@@ -217,15 +233,49 @@ export default function DealDetail({ deal, onClose, onChange }: {
           <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
             <Card label="Notes & activity" action={<span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{comments.length} note{comments.length === 1 ? '' : 's'}</span>}>
               <div style={{ display: 'grid', gap: 14, marginBottom: 14 }}>
-                {comments.map((c) => (
-                  <div key={c.id} style={{ display: 'flex', gap: 10 }}>
-                    <span style={avatar}>{c.initials}</span>
-                    <div>
-                      <div style={{ fontSize: 13 }}><b>{c.author}</b> <span style={{ color: 'var(--ink-muted)' }}>· {new Date(c.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })} · {new Date(c.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>
-                      <div style={{ fontSize: 14, marginTop: 2 }}>{c.text}</div>
+                {comments.map((c) => {
+                  // Your own notes are yours to fix; someone else's stay read-only so the
+                  // activity trail can't be quietly rewritten.
+                  const mine = Boolean(profile?.name) && c.author === profile!.name
+                  const editing = editingNote === c.id
+                  return (
+                    <div key={c.id} className="note-row" style={{ display: 'flex', gap: 10 }}>
+                      <span style={avatar}>{c.initials}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                          <div style={{ fontSize: 13, flex: 1 }}><b>{c.author}</b> <span style={{ color: 'var(--ink-muted)' }}>· {new Date(c.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })} · {new Date(c.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span></div>
+                          {mine && !editing && (
+                            <span className="note-actions" style={{ display: 'flex', gap: 6 }}>
+                              <button style={noteAction} onClick={() => { setEditingNote(c.id); setNoteDraft(c.text) }}>Edit</button>
+                              <button style={{ ...noteAction, color: '#C0392B' }} onClick={() => deleteNote(c.id)}>Delete</button>
+                            </span>
+                          )}
+                        </div>
+                        {editing ? (
+                          <div style={{ marginTop: 4 }}>
+                            <textarea
+                              value={noteDraft}
+                              onChange={(e) => setNoteDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveNote(c.id)
+                                if (e.key === 'Escape') setEditingNote(null)
+                              }}
+                              style={composer}
+                              rows={2}
+                              autoFocus
+                            />
+                            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                              <button style={postBtn} onClick={() => saveNote(c.id)}>Save</button>
+                              <button style={noteAction} onClick={() => setEditingNote(null)}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 14, marginTop: 2, whiteSpace: 'pre-wrap' }}>{c.text}</div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {comments.length === 0 && <div style={{ color: 'var(--ink-muted)', fontSize: 13 }}>No notes yet.</div>}
               </div>
               <div style={{ display: 'flex', gap: 10 }}>
@@ -309,4 +359,8 @@ const miniInput: React.CSSProperties = { padding: '8px 10px', border: '1px solid
 const editBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: 8, padding: '5px 11px', fontSize: 12.5, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer' }
 const openInvoiceBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', borderRadius: 9, padding: '7px 13px', fontSize: 13, color: 'var(--accent)', fontWeight: 600, cursor: 'pointer' }
 const closeBtn: React.CSSProperties = { border: '1px solid var(--line)', background: 'var(--panel)', width: 34, height: 34, borderRadius: 9, fontSize: 20, cursor: 'pointer', color: 'var(--ink-soft)', lineHeight: 1 }
+const noteAction: React.CSSProperties = {
+  border: 'none', background: 'transparent', padding: 0, fontSize: 12, fontWeight: 600,
+  color: 'var(--ink-muted)', cursor: 'pointer',
+}
 const link: React.CSSProperties = { color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', wordBreak: 'break-all' }
