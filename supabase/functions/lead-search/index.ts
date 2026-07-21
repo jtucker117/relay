@@ -62,6 +62,21 @@ const TRADE_HINTS = [
   "cabinet", "countertop", "granite", "solar", "security", "alarm", "sign", "print",
 ];
 
+// Every search is fenced to one state. Without this, a query with no town in it
+// ("home builders") has nothing to pin it down and Google happily returns Oregon.
+const STATES: Record<string, string> = {
+  AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
+  CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia",
+  FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana",
+  IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland",
+  MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri",
+  MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey",
+  NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio",
+  OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina",
+  SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont",
+  VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+};
+
 type Verdict = "none" | "social" | "builder" | "stale" | "modern";
 type Social = { platform: string; url: string };
 
@@ -69,6 +84,7 @@ interface Lead {
   id: string; place_id: string | null; name: string; category: string | null;
   area: string | null; phone: string | null; address: string | null; zip: string | null;
   rating: number | null; reviews: number; web_status: string; website: string | null;
+  state: string | null;
   site_verdict: Verdict; site_reason: string | null; socials: Social[];
   lat: number | null; lng: number | null; source: "live";
 }
@@ -228,7 +244,13 @@ function comp(components: PlaceComponent[] | undefined, type: string): string | 
 }
 
 interface Viewport { low: { latitude: number; longitude: number }; high: { latitude: number; longitude: number } }
-interface Area { name: string; viewport: Viewport | null }
+interface Area { name: string; viewport: Viewport | null; center?: { lat: number; lng: number } | null; isGeo?: boolean }
+
+function inViewport(pt: { lat: number; lng: number } | null | undefined, vp: Viewport | null): boolean {
+  if (!pt || !vp) return false;
+  return pt.lat >= vp.low.latitude && pt.lat <= vp.high.latitude &&
+    pt.lng >= vp.low.longitude && pt.lng <= vp.high.longitude;
+}
 
 async function placesText(key: string, body: Record<string, unknown>, fieldMask: string) {
   const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
@@ -252,10 +274,19 @@ async function resolveArea(key: string, place: string): Promise<Area | null> {
   const places: Record<string, unknown>[] = data.places ?? [];
   if (!places.length) return null;
   // Prefer a genuine locality result over a business that happens to match the name.
-  const city = places.find((p) => ((p.types as string[]) ?? []).some((t) => GEO_TYPES.has(t))) ?? places[0];
+  const geo = places.find((p) => ((p.types as string[]) ?? []).some((t) => GEO_TYPES.has(t)));
+  const city = geo ?? places[0];
   const vp = city.viewport as Viewport | undefined;
   const name = (city.displayName as { text?: string })?.text ?? place;
-  return { name, viewport: vp ?? null };
+  const loc = city.location as { latitude?: number; longitude?: number } | undefined;
+  return {
+    name,
+    viewport: vp ?? null,
+    center: loc?.latitude != null ? { lat: loc.latitude, lng: loc.longitude! } : null,
+    // Only a genuine geographic hit is safe to search inside. "home builders" resolves to
+    // some random contractor, and pinning the search to that business's block is nonsense.
+    isGeo: Boolean(geo),
+  };
 }
 
 const FIELD_MASK = [
@@ -297,6 +328,7 @@ function toLead(p: Record<string, unknown>): Lead {
     phone: (p.nationalPhoneNumber as string) || null,
     address: (p.formattedAddress as string) || null,
     zip: comp(p.addressComponents as PlaceComponent[], "postal_code"),
+    state: comp(p.addressComponents as PlaceComponent[], "administrative_area_level_1"),
     rating: typeof p.rating === "number" ? p.rating : null,
     reviews: typeof p.userRatingCount === "number" ? (p.userRatingCount as number) : 0,
     web_status: "likely",
@@ -340,13 +372,24 @@ function placePart(q: string): string {
   return (m ? m[1] : q).trim();
 }
 
-async function searchPlaces(key: string, query: string, industry: string | null): Promise<{ leads: Lead[]; area: string | null; trades: number }> {
+async function searchPlaces(key: string, query: string, industry: string | null, stateCode: string): Promise<{ leads: Lead[]; area: string | null; trades: number }> {
   const q = query.trim();
   const namedTrade = industry?.trim() || (hasTradeTerm(q) ? q : null);
   const place = placePart(q);
+  const stateName = STATES[stateCode] ?? "Texas";
 
-  // Resolve the town first so every subsequent search is pinned to it.
-  const area = await resolveArea(key, place).catch(() => null);
+  // The state is the outer fence — resolved first so there's always somewhere to pin to,
+  // even when the query names no town at all ("home builders").
+  const stateArea = await resolveArea(key, stateName).catch(() => null);
+
+  // Then the town, if the query named one we can trust.
+  const typed = await resolveArea(key, place).catch(() => null);
+  const typedIsInState = typed?.isGeo && (
+    !stateArea?.viewport || inViewport(typed.center, stateArea.viewport)
+  );
+  // A town outside the chosen state (or a non-place like "home builders") is ignored in
+  // favour of the state itself — the state filter always wins.
+  const area = typedIsInState ? typed : stateArea;
 
   const fanOut = async (): Promise<Lead[][]> =>
     await pooled(TRADES, 6, (t) =>
@@ -413,7 +456,7 @@ async function searchClaude(apiKey: string, query: string): Promise<Lead[]> {
       address: r.address ? String(r.address).trim() : null, zip,
       rating: typeof r.rating === "number" ? r.rating : null,
       reviews: typeof r.reviews === "number" ? Math.round(r.reviews) : 0,
-      web_status: "likely", website,
+      web_status: "likely", website, state: null,
       site_verdict: "none" as Verdict, site_reason: null, socials: socialFromWebsite(website),
       lat: typeof r.lat === "number" ? r.lat : null,
       lng: typeof r.lng === "number" ? r.lng : null,
@@ -487,6 +530,8 @@ Deno.serve(async (req: Request) => {
     const query = String(payload?.query ?? "").trim();
     if (!query) throw new Error("Missing search query.");
     const industry: string | null = payload?.industry ? String(payload.industry).trim() : null;
+    const rawState = String(payload?.state ?? "TX").trim().toUpperCase();
+    const stateCode = STATES[rawState] ? rawState : "TX";
     // Default ON: the board is for finding sellable businesses, not a phone book.
     const onlyProspects = payload?.onlyProspects !== false;
 
@@ -494,7 +539,7 @@ Deno.serve(async (req: Request) => {
     let found: Lead[];
     let area: string | null = null;
     if (placesKey) {
-      const r = await searchPlaces(placesKey, query, industry);
+      const r = await searchPlaces(placesKey, query, industry, stateCode);
       found = r.leads; area = r.area;
     } else {
       const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
@@ -505,7 +550,16 @@ Deno.serve(async (req: Request) => {
     // De-dupe across the trade fan-out (a business can match two trades).
     const byId = new Map<string, Lead>();
     for (const l of found) if (l.id && !byId.has(l.id)) byId.set(l.id, l);
-    const unique = [...byId.values()];
+    let unique = [...byId.values()];
+
+    // Hard state fence. A viewport rectangle overlaps neighbouring states at the corners,
+    // so the bounding box is not enough on its own — check the address Google gave us.
+    const stateName = STATES[stateCode];
+    const stateRe = new RegExp(`(,\\s*${stateCode}\\b|\\b${stateName}\\b)`, "i");
+    const outOfState = unique.filter((l) =>
+      l.state ? l.state.toUpperCase() !== stateCode : !(l.address && stateRe.test(l.address)));
+    const dropped = outOfState.length;
+    unique = unique.filter((l) => !outOfState.includes(l));
 
     // Verdict from the URL where that's decisive; fetch the rest. Probing is capped so a
     // huge result set can't blow the function's wall clock.
@@ -551,6 +605,8 @@ Deno.serve(async (req: Request) => {
       scanned: unique.length,
       prospects: prospects.length,
       area,
+      state: stateCode,
+      outOfState: dropped,
       probed: probing.length,
       withSocials: leads.filter((l) => l.socials.length > 0).length,
     }), { headers: { ...cors, "Content-Type": "application/json" } });

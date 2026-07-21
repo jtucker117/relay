@@ -4,6 +4,7 @@ import Screen from '../components/Screen'
 import Icon from '../components/Icon'
 import { supabase } from '../lib/supabase'
 import type { Lead, LeadStatus } from '../lib/types'
+import { US_STATES } from '../lib/catalog'
 
 // Shared outreach board — ports the standalone SiteStac lead tool into Relay.
 // Search • coordinate map • per-lead outreach stages • notes • CSV export • manual add.
@@ -70,6 +71,10 @@ export default function Leads() {
   const [liveQuery, setLiveQuery] = useState('')
   // The whole point of the board: only surface businesses we can actually sell a site to.
   const [onlyProspects, setOnlyProspects] = useState(true)
+  // Fence live search to one state. Persisted — Jordan works Texas, and re-picking it
+  // every session is the kind of thing that quietly poisons a lead board.
+  const [searchState, setSearchState] = useState<string>(() => localStorage.getItem('relay.searchState') ?? 'TX')
+  useEffect(() => { localStorage.setItem('relay.searchState', searchState) }, [searchState])
   const [liveNote, setLiveNote] = useState<string | null>(null)
 
   // Leave the live-search result view and return to normal filtering.
@@ -146,8 +151,8 @@ export default function Leads() {
   }
 
   function exportCsv() {
-    const cols: (keyof Lead)[] = ['name', 'category', 'area', 'phone', 'address', 'zip',
-      'rating', 'reviews', 'web_status', 'website', 'status', 'contacted_on', 'notes', 'source', 'lat', 'lng']
+    const cols: (keyof Lead)[] = ['name', 'category', 'area', 'state', 'phone', 'address', 'zip',
+      'rating', 'reviews', 'site_verdict', 'site_reason', 'website', 'status', 'contacted_on', 'notes', 'source', 'lat', 'lng']
     const esc = (v: unknown) => {
       const s = v == null ? '' : String(v)
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
@@ -170,10 +175,10 @@ export default function Leads() {
     setSearching(true); setLiveMsg(null); setLiveResultIds(null); setLiveNote(null)
     try {
       const { data, error } = await supabase.functions.invoke('lead-search', {
-        body: { query, onlyProspects, industry: cat === 'all' ? null : cat },
+        body: { query, onlyProspects, industry: cat === 'all' ? null : cat, state: searchState },
       })
       if (error) throw error
-      const res = data as { leads?: Lead[]; scanned?: number; prospects?: number; area?: string | null; withSocials?: number } | null
+      const res = data as { leads?: Lead[]; scanned?: number; prospects?: number; area?: string | null; withSocials?: number; outOfState?: number; state?: string } | null
       const found = res?.leads ?? []
       // De-dupe by id before upsert (Postgres rejects the same id twice in one upsert).
       const byId = new Map(found.filter((f) => f?.id).map((f) => [f.id, { ...f, source: 'live' as const }]))
@@ -181,7 +186,7 @@ export default function Leads() {
       if (!rows.length) {
         setLiveMsg(res?.scanned
           ? `Checked ${res.scanned} businesses${res.area ? ` in ${res.area}` : ''} — every one already has a decent site. Turn off “Only no-site & outdated” to see them.`
-          : `Live search found no businesses${res?.area ? ` in ${res.area}` : ''}. Try a nearby town or a specific trade, e.g. “roofers in Conroe”.`)
+          : `Live search found no businesses${res?.area ? ` in ${res.area}` : ''}. Check the state is set to ${searchState}, or try a specific trade, e.g. “roofers in Conroe”.`)
         return
       }
 
@@ -196,6 +201,7 @@ export default function Leads() {
       setLiveMsg(null)
       const bits = [`scanned ${res?.scanned ?? rows.length} businesses${res?.area ? ` in ${res.area}` : ''}`]
       if (res?.withSocials) bits.push(`${res.withSocials} with social profiles`)
+      if (res?.outOfState) bits.push(`${res.outOfState} dropped outside ${res.state ?? searchState}`)
       setLiveNote(bits.join(' · '))
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Live search failed.'
@@ -215,6 +221,14 @@ export default function Leads() {
             <span style={{ color: 'var(--ink-muted)', display: 'flex' }}><Icon name="search" size={16} /></span>
             <input value={q} onChange={(e) => { setQ(e.target.value); clearLive() }} placeholder="Search name, category, address…" style={searchInput} />
           </div>
+          <select
+            value={searchState}
+            onChange={(e) => setSearchState(e.target.value)}
+            style={stateSelect}
+            title="Live search only returns businesses in this state"
+          >
+            {US_STATES.map((s) => <option key={s.code} value={s.code}>{s.code}</option>)}
+          </select>
           <button
             onClick={() => setOnlyProspects((v) => !v)}
             style={{ ...ghostBtn, ...(onlyProspects ? prospectOn : null) }}
@@ -680,6 +694,10 @@ const noSiteBadge: React.CSSProperties = {
 // Live-search toggle in its "on" state.
 const prospectOn: React.CSSProperties = {
   borderColor: 'var(--accent)', color: 'var(--accent)', fontWeight: 600,
+}
+const stateSelect: React.CSSProperties = {
+  padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 9, fontSize: 13,
+  background: 'var(--panel)', color: 'var(--ink)', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
 }
 const mapWrap: React.CSSProperties = {
   position: 'relative', background: 'var(--rail)', border: '1px solid var(--line-2)',

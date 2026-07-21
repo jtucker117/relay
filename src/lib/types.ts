@@ -25,6 +25,7 @@ export interface Lead {
   reviews: number | null
   web_status: 'confirmed' | 'likely' | 'maybe'
   website: string | null
+  state: string | null
   // Why this business is (or isn't) a prospect — set by the lead-search function after it
   // actually fetches their homepage. See supabase/012_leads_site_quality.sql.
   site_verdict: SiteVerdict | null
