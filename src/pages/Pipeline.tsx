@@ -6,10 +6,10 @@ import Icon from '../components/Icon'
 import { supabase } from '../lib/supabase'
 import { STAGES, PACKAGE_COLOR, pkg } from '../lib/catalog'
 import { dealTotals, pipelineTotal, weightedPipeline, money } from '../lib/money'
-import type { Deal } from '../lib/types'
+import type { Deal, Stage } from '../lib/types'
 
 // High-fidelity pipeline board: stat bar, search, stage columns, tinted deal cards.
-// Reads real deals from Supabase (RLS-scoped). Drag-and-drop + deal slide-over next.
+// Reads real deals from Supabase (RLS-scoped). Cards drag between stage columns.
 export default function Pipeline() {
   const [deals, setDeals] = useState<Deal[]>([])
   const [loading, setLoading] = useState(true)
@@ -17,6 +17,8 @@ export default function Pipeline() {
   const [showAdd, setShowAdd] = useState(false)
   const [openDeal, setOpenDeal] = useState<Deal | null>(null)
   const [q, setQ] = useState('')
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [overStage, setOverStage] = useState<string | null>(null)
 
   const load = useCallback(() => {
     supabase.from('deals').select('*').order('updated_at', { ascending: false })
@@ -34,6 +36,20 @@ export default function Pipeline() {
     return deals.filter((d) =>
       [d.company, d.name, d.contact, d.email].some((v) => (v ?? '').toLowerCase().includes(t)))
   }, [deals, q])
+
+  // Drag a card to another column: optimistic local move, then persist.
+  const moveDeal = useCallback(async (id: string, to: Stage) => {
+    const d = deals.find((x) => x.id === id)
+    if (!d || d.stage === to) return
+    const prev = d.stage
+    setDeals((list) => list.map((x) => (x.id === id ? { ...x, stage: to } : x)))
+    const { error } = await supabase.from('deals')
+      .update({ stage: to, updated_at: new Date().toISOString() }).eq('id', id)
+    if (error) {
+      setDeals((list) => list.map((x) => (x.id === id ? { ...x, stage: prev } : x)))
+      setErr(error.message)
+    }
+  }, [deals])
 
   return (
     <Screen
@@ -75,20 +91,64 @@ export default function Pipeline() {
             const col = filtered.filter((d) => d.stage === s.id)
             const total = col.reduce((sum, d) => sum + dealTotals(d).acv, 0)
             return (
-              <div key={s.id} style={column}>
+              <div
+                key={s.id}
+                style={column}
+                onDragOver={(e) => {
+                  if (!dragId) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                  if (overStage !== s.id) setOverStage(s.id)
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverStage((v) => (v === s.id ? null : v))
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const id = dragId ?? e.dataTransfer.getData('text/plain')
+                  setOverStage(null)
+                  setDragId(null)
+                  if (id) moveDeal(id, s.id as Stage)
+                }}
+              >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '0 2px' }}>
                   <span style={{ width: 9, height: 9, borderRadius: '50%', background: s.color }} />
                   <b style={{ fontSize: 13.5 }}>{s.name}</b>
                   <span style={countPill}>{col.length}</span>
                   <span style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ink-soft)' }} className="num">{money(total)}</span>
                 </div>
-                <div style={{ display: 'grid', gap: 10 }}>
+                <div
+                  style={{
+                    display: 'grid', gap: 10, alignContent: 'start', minHeight: 120,
+                    borderRadius: 12, padding: 4, margin: -4,
+                    transition: 'background 120ms, box-shadow 120ms',
+                    ...(overStage === s.id && dragId
+                      ? { background: s.color + '10', boxShadow: `inset 0 0 0 1.5px ${s.color}55` }
+                      : null),
+                  }}
+                >
                   {col.map((d) => {
                     const t = dealTotals(d)
                     const color = PACKAGE_COLOR[d.package_id]
                     const n = d.addons.length
                     return (
-                      <div key={d.id} className="deal-card" style={dealCard} onClick={() => setOpenDeal(d)}>
+                      <div
+                        key={d.id}
+                        className="deal-card"
+                        style={{
+                          ...dealCard,
+                          cursor: 'grab',
+                          opacity: dragId === d.id ? 0.4 : 1,
+                        }}
+                        draggable
+                        onDragStart={(e) => {
+                          setDragId(d.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                          e.dataTransfer.setData('text/plain', d.id)
+                        }}
+                        onDragEnd={() => { setDragId(null); setOverStage(null) }}
+                        onClick={() => { if (!dragId) setOpenDeal(d) }}
+                      >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                           <b style={{ fontSize: 14.5 }}>{d.company}</b>
                           <span style={{ ...pkgBadge, background: color + '1F', color }}>{pkg(d.package_id).name}</span>
