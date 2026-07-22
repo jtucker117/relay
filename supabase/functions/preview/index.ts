@@ -21,6 +21,10 @@ const supa = createClient(SUPABASE_URL, SERVICE_ROLE);
 const enc = new TextEncoder();
 const esc = (s: string) => (s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+// Minimal escaping for a double-quoted `srcdoc` attribute: only `&` and `"`
+// need encoding; the browser reconstructs the original HTML before parsing the
+// frame document. Keeps the inlined payload lean (no need to escape every `<`).
+const srcdocEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
 // Always respond as UTF-8 HTML. Use an explicit Headers object so the runtime
 // never falls back to text/plain (which shows the markup as raw text).
@@ -53,6 +57,14 @@ function readCookie(req: Request, name: string): string | null {
   }
   return null;
 }
+
+// Strip any Cloudflare bot-detection beacon that got baked into the stored HTML
+// (it ends up there when a site is bundled/saved from a CF-fronted URL). Baked
+// into a saved file, that beacon throws "Cannot read properties of null
+// (reading 'document')" on load — which the client sees as a red error bar.
+// Match any <script> that references the CF markers and drop it wholesale.
+const stripCfBeacon = (s: string) =>
+  s.replace(/<script\b[^>]*>[\s\S]*?(?:__CF\$cv\$params|challenge-platform)[\s\S]*?<\/script>/gi, "");
 
 const DETERRENT = `<script>
 document.addEventListener('contextmenu',e=>e.preventDefault());
@@ -115,14 +127,38 @@ Deno.serve(async (req: Request) => {
   const unlocked = !gated || (await cookieValid(readCookie(req, cookieName), slug));
   if (!unlocked) return shell("Enter your access code", gateHtml(slug, esc(rec.company), false));
 
-  // Raw site (framed by the portal only).
+  // Raw site as a standalone network response. Kept for external URLs (302) and
+  // as a direct-open fallback. The portal itself no longer frames this route for
+  // stored HTML — see the srcdoc note below.
   if (url.searchParams.get("raw") === "1") {
     if (rec.external_url) return new Response(null, { status: 302, headers: { Location: rec.external_url } });
     const { data: file } = await supa.storage.from("previews").download(`${slug}.html`);
     if (!file) return shell("Missing", `<div class="wrap"><h1>Preview content missing.</h1></div>`);
-    let site = await file.text();
+    let site = stripCfBeacon(await file.text());
     site = site.includes("</body>") ? site.replace("</body>", `${DETERRENT}</body>`) : site + DETERRENT;
     return html(site, { "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'" });
+  }
+
+  // Build the site frame for the portal.
+  //   - Stored HTML is inlined via `srcdoc` (NOT a network `src="…&raw=1"`).
+  //     Reason: on relay.sitestac.com, Cloudflare injects its JS-detection beacon
+  //     into every proxied HTML response. Inside our opaque-origin sandbox frame
+  //     (allow-scripts, no allow-same-origin) that beacon throws
+  //     "Cannot read properties of null (reading 'document')" in the client's
+  //     console. srcdoc has no network response for CF to inject into, so the
+  //     beacon never reaches the frame — while the sandbox stays just as tight.
+  //     Do NOT switch this back to a network src, and do NOT add allow-same-origin
+  //     to silence it (that would give arbitrary preview HTML our origin).
+  //   - External URLs keep the redirect route (they load from their own origin).
+  let frameTag: string;
+  if (rec.external_url) {
+    frameTag = `<iframe src="?p=${slug}&raw=1" title="Website preview" sandbox="allow-scripts"></iframe>`;
+  } else {
+    const { data: file } = await supa.storage.from("previews").download(`${slug}.html`);
+    if (!file) return shell("Missing", `<div class="wrap"><h1>Preview content missing.</h1></div>`);
+    let site = stripCfBeacon(await file.text());
+    site = site.includes("</body>") ? site.replace("</body>", `${DETERRENT}</body>`) : site + DETERRENT;
+    frameTag = `<iframe srcdoc="${srcdocEsc(site)}" title="Website preview" sandbox="allow-scripts"></iframe>`;
   }
 
   // Log the view — the client opened the portal.
@@ -132,7 +168,7 @@ Deno.serve(async (req: Request) => {
   }).eq("slug", slug);
 
   const statusLabel = rec.status === "approved" ? "Approved" : rec.status === "changes" ? "Changes requested" : "In review";
-  return html(portalHtml(slug, esc(rec.company), statusLabel));
+  return html(portalHtml(slug, esc(rec.company), statusLabel, frameTag));
 });
 
 function gateHtml(slug: string, company: string, err: boolean) {
@@ -147,7 +183,7 @@ function gateHtml(slug: string, company: string, err: boolean) {
   </div>`;
 }
 
-function portalHtml(slug: string, company: string, statusLabel: string) {
+function portalHtml(slug: string, company: string, statusLabel: string, frameTag: string) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Preview for ${company}</title><style>
 *{box-sizing:border-box}html,body{margin:0;height:100%}body{font-family:system-ui,-apple-system,sans-serif;background:#161619;display:flex;flex-direction:column}
@@ -167,6 +203,6 @@ form{display:inline}
     <form method="post" action="?p=${slug}"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="changes"><button class="act changes" type="submit">Request changes</button></form>
     <form method="post" action="?p=${slug}"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="approved"><button class="act approve" type="submit">Approve this site</button></form>
   </div>
-  <iframe src="?p=${slug}&raw=1" title="Website preview" sandbox="allow-scripts"></iframe>
+  ${frameTag}
 </body></html>`;
 }
