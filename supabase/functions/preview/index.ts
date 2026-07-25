@@ -143,9 +143,34 @@ const ANNOTATE = `<script>(function(){
   function docH(){var d=document;return Math.max(d.documentElement.scrollHeight,d.body?d.body.scrollHeight:0,d.documentElement.clientHeight)}
   function docW(){return document.documentElement.clientWidth||window.innerWidth}
   function layer(){var l=document.getElementById(LID);if(!l){l=document.createElement('div');l.id=LID;l.style.cssText='position:absolute;top:0;left:0;width:100%;height:0;z-index:2147482000;pointer-events:none';(document.body||document.documentElement).appendChild(l)}return l}
+  // Build a resilient CSS path from body to el so the pin can re-find the same
+  // element at any viewport width (responsive layouts move it around).
+  function cssPath(el){
+    if(!el||el.nodeType!==1)return '';
+    var parts=[],guard=0;
+    while(el&&el.nodeType===1&&el.tagName!=='BODY'&&el.tagName!=='HTML'&&guard++<14){
+      var sel=el.tagName.toLowerCase(),p=el.parentNode;
+      if(el.id&&/^[A-Za-z][\\w-]*$/.test(el.id)){parts.unshift(sel+'#'+el.id);break;}
+      if(p){var same=Array.prototype.filter.call(p.children,function(c){return c.tagName===el.tagName;});
+        if(same.length>1)sel+=':nth-of-type('+(Array.prototype.indexOf.call(same,el)+1)+')';}
+      parts.unshift(sel);el=p;
+    }
+    return parts.join('>');
+  }
+  // Position a pin: prefer its anchored element (follows responsive layout);
+  // fall back to the stored document fraction.
+  function place(p,c){
+    var a=c.anchor; if(a&&typeof a==='string'){try{a=JSON.parse(a)}catch(e){a=null}}
+    if(a&&a.sel){var el=null;try{el=document.querySelector(a.sel)}catch(e){}
+      if(el){var r=el.getBoundingClientRect();
+        p.style.left=(r.left+window.scrollX+(a.ox==null?0.5:a.ox)*r.width)+'px';
+        p.style.top=(r.top+window.scrollY+(a.oy==null?0.5:a.oy)*r.height)+'px';return;}}
+    p.style.left=(c.x_pct*100)+'%';p.style.top=(c.y_pct*docH())+'px';
+  }
   function pin(c,n){
-    var H=docH(),p=document.createElement('div');
-    p.style.cssText='position:absolute;left:'+(c.x_pct*100)+'%;top:'+(c.y_pct*H)+'px;transform:translate(-50%,-100%);pointer-events:auto';
+    var p=document.createElement('div');
+    p.style.cssText='position:absolute;transform:translate(-50%,-100%);pointer-events:auto';
+    place(p,c);
     var dot=document.createElement('div');
     dot.style.cssText='min-width:24px;height:24px;padding:0 7px;border-radius:13px 13px 13px 3px;background:'+(c.resolved?'#8A8A90':'#E0932E')+';color:#fff;font:700 12px/24px -apple-system,sans-serif;text-align:center;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4);cursor:default';
     dot.textContent=n;
@@ -158,7 +183,7 @@ const ANNOTATE = `<script>(function(){
   function render(){var l=layer();l.innerHTML='';for(var i=0;i<comments.length;i++)l.appendChild(pin(comments[i],i+1));try{parent.postMessage({__relay:'count',n:comments.length},'*')}catch(e){}}
   function setMode(on){mode=on;document.documentElement.style.cursor=on?'crosshair':'';var h=document.getElementById('__relay_hint');if(on&&!h){h=document.createElement('div');h.id='__relay_hint';h.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#5B4FE9;color:#fff;font:600 13px/1 -apple-system,sans-serif;padding:11px 18px;border-radius:22px;z-index:2147483600;box-shadow:0 6px 18px rgba(0,0,0,.35);pointer-events:none';h.textContent='Click anywhere on the site to leave a note';document.body.appendChild(h)}else if(!on&&h){h.remove()}}
   function closeComposer(){var c=document.getElementById('__relay_composer');if(c)c.remove()}
-  function composer(x_pct,y_pct,pageY){
+  function composer(x_pct,y_pct,pageY,anchor){
     closeComposer();
     var box=document.createElement('div');box.id='__relay_composer';
     box.style.cssText='position:absolute;left:'+(x_pct*100)+'%;top:'+pageY+'px;transform:translate(-50%,12px);z-index:2147483600;background:#fff;border:1px solid #E4E3DE;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.28);padding:10px;width:250px;font-family:-apple-system,sans-serif;pointer-events:auto';
@@ -169,10 +194,10 @@ const ANNOTATE = `<script>(function(){
     row.appendChild(save);row.appendChild(cancel);box.appendChild(ta);box.appendChild(row);document.body.appendChild(box);ta.focus();
     cancel.onclick=closeComposer;
     save.onclick=function(){var t=ta.value.trim();if(!t)return;save.textContent='Saving…';save.disabled=true;
-      fetch('?p='+encodeURIComponent(slug),{method:'POST',credentials:'same-origin',headers:{'content-type':'application/x-www-form-urlencoded'},body:'_action=comment&x='+x_pct+'&y='+y_pct+'&text='+encodeURIComponent(t)})
+      fetch('?p='+encodeURIComponent(slug),{method:'POST',credentials:'same-origin',headers:{'content-type':'application/x-www-form-urlencoded'},body:'_action=comment&x='+x_pct+'&y='+y_pct+'&anchor='+encodeURIComponent(anchor||'')+'&text='+encodeURIComponent(t)})
       .then(function(r){return r.json()}).then(function(res){
         if(!res||res.error||!res.id){save.textContent='Try again';save.disabled=false;save.style.background='#c0392b';return}
-        comments.push({x_pct:x_pct,y_pct:y_pct,text:t,resolved:false,id:res.id});closeComposer();render();
+        comments.push({x_pct:x_pct,y_pct:y_pct,anchor:anchor,text:t,resolved:false,id:res.id});closeComposer();render();
       })
       .catch(function(){save.textContent='Try again';save.disabled=false;save.style.background='#c0392b'});
     };
@@ -181,7 +206,13 @@ const ANNOTATE = `<script>(function(){
     if(!mode)return;var t=e.target;
     if(t&&t.closest&&t.closest('#__relay_composer,#'+LID))return;
     e.preventDefault();e.stopPropagation();
-    composer(e.clientX/docW(),e.pageY/docH(),e.pageY);
+    // Anchor to the element under the cursor + where within it we clicked.
+    var el=document.elementFromPoint(e.clientX,e.clientY),anchor='';
+    if(el&&el.getBoundingClientRect){var r=el.getBoundingClientRect();
+      anchor=JSON.stringify({sel:cssPath(el),
+        ox:r.width?(e.clientX-r.left)/r.width:0.5,
+        oy:r.height?(e.clientY-r.top)/r.height:0.5});}
+    composer(e.clientX/docW(),e.pageY/docH(),e.pageY,anchor);
   },true);
   window.addEventListener('message',function(e){if(e.data&&e.data.__relay==='mode')setMode(!!e.data.on)});
   window.addEventListener('resize',render);
@@ -229,10 +260,11 @@ Deno.serve(async (req: Request) => {
       if (!unlockedForPost) return json({ error: "locked" }, 401);
       const x = Number(form.get("x")), y = Number(form.get("y"));
       const text = String(form.get("text") ?? "").trim().slice(0, 2000);
+      const anchor = (String(form.get("anchor") ?? "").slice(0, 2000)) || null;
       if (!text || !isFinite(x) || !isFinite(y)) return json({ error: "invalid" }, 400);
       const { data: ins, error } = await supa.from("preview_comments").insert({
         slug, org_id: rec.org_id,
-        x_pct: Math.min(1, Math.max(0, x)), y_pct: Math.max(0, y), text,
+        x_pct: Math.min(1, Math.max(0, x)), y_pct: Math.max(0, y), text, anchor,
       }).select("id").single();
       if (error) return json({ error: error.message }, 500);
       return json({ id: ins?.id });
@@ -242,8 +274,9 @@ Deno.serve(async (req: Request) => {
       const status = form.get("status") === "approved" ? "approved" : "changes";
       await supa.from("previews").update({ status, decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("slug", slug);
       if (status === "changes") { try { await notifyChanges(rec, slug); } catch (_e) { /* email is best-effort */ } }
-      // Relative redirect so it works whether served at supabase.co/... or proxied at relay.sitestac.com/preview.
-      return new Response(null, { status: 303, headers: { Location: `?p=${slug}` } });
+      // Relative redirect (works at supabase.co/... or proxied at relay.sitestac.com).
+      // ?done= drives a one-time confirmation toast, then the client cleans it off.
+      return new Response(null, { status: 303, headers: { Location: `?p=${slug}&done=${status}` } });
     }
     const entered = String(form.get("code") ?? "").trim();
     const ok = (code && entered.toUpperCase() === code.toUpperCase()) ||
@@ -301,8 +334,8 @@ Deno.serve(async (req: Request) => {
     last_viewed_at: new Date().toISOString(),
   }).eq("slug", slug);
 
-  const statusLabel = rec.status === "approved" ? "Approved" : rec.status === "changes" ? "Changes requested" : "In review";
-  return html(portalHtml(slug, esc(rec.company), statusLabel, frameTag));
+  const done = url.searchParams.get("done"); // 'changes' | 'approved' | null (one-time toast)
+  return html(portalHtml(slug, esc(rec.company), frameTag, done === "approved" ? "approved" : done === "changes" ? "changes" : ""));
 });
 
 function gateHtml(slug: string, company: string, err: boolean) {
@@ -317,45 +350,63 @@ function gateHtml(slug: string, company: string, err: boolean) {
   </div>`;
 }
 
-function portalHtml(slug: string, company: string, statusLabel: string, frameTag: string) {
+function portalHtml(slug: string, company: string, frameTag: string, done: string) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Preview for ${company}</title><style>
-*{box-sizing:border-box}html,body{margin:0;height:100%}body{font-family:system-ui,-apple-system,sans-serif;background:#161619;display:flex;flex-direction:column}
-.bar{display:flex;align-items:center;gap:12px;padding:10px 16px;color:#fff;background:#161619;border-bottom:1px solid #26262C}
-.bar b{font-size:14px}.chip{font-size:12px;background:#26262C;color:#cfcfe0;padding:3px 9px;border-radius:20px}
-.spacer{flex:1}
-.act{border:none;border-radius:9px;padding:8px 14px;font-weight:600;font-size:13px;cursor:pointer}
-.approve{background:#3E9E6E;color:#fff}.changes{background:#E0932E;color:#fff}.ghost{background:#26262C;color:#fff}
-.act+.act{margin-left:8px}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{font-family:system-ui,-apple-system,sans-serif;background:#161619;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;gap:10px;padding:9px 14px;color:#fff;background:#161619;border-bottom:1px solid #26262C}
+.co{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.acts{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.act{border:none;border-radius:9px;padding:9px 13px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;line-height:1}
+.approve{background:#3E9E6E;color:#fff}.changes{background:#E0932E;color:#fff}.ghost{background:#2C2C33;color:#fff}
+.cnt{font-size:12px;color:#cfcfe0;background:#26262C;padding:4px 9px;border-radius:20px;white-space:nowrap}
 iframe{flex:1;width:100%;border:none;background:#fff}
-#mode-comment{align-items:center;gap:12px}
-.hint{color:#cfcfe0;font-size:13px}
+form{display:inline}
+.toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-18px);background:#3E9E6E;color:#fff;font:600 14px/1.3 -apple-system,sans-serif;padding:12px 18px;border-radius:24px;box-shadow:0 10px 28px rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:opacity .35s,transform .35s;z-index:2147483647;max-width:calc(100% - 28px);text-align:center}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+@media(max-width:560px){
+  .bar{padding:8px 11px;gap:8px}
+  .co{font-size:13px}
+  .act{padding:9px 12px;font-size:13px}
+  .cnt{display:none}
+}
 </style>
 <script>document.addEventListener('contextmenu',e=>e.preventDefault());</script></head>
 <body>
   <div class="bar">
-    <b>${company}</b><span class="chip" id="statuschip">${statusLabel}</span>
-    <span class="spacer"></span>
-    <span id="mode-default">
+    <span class="co">${company}</span>
+    <div class="acts" id="mode-default">
       <button class="act changes" id="btn-request" type="button">Request changes</button>
-      <form method="post" action="?p=${slug}" style="display:inline"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="approved"><button class="act approve" type="submit">Approve this site</button></form>
-    </span>
-    <span id="mode-comment" style="display:none">
-      <span class="hint">Click the site to pin a note<span id="cnt"></span></span>
+      <form method="post" action="?p=${slug}"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="approved"><button class="act approve" type="submit">Approve</button></form>
+    </div>
+    <div class="acts" id="mode-comment" style="display:none">
+      <span class="cnt" id="cnt">0 notes</span>
       <button class="act ghost" id="btn-exit" type="button">Cancel</button>
       <button class="act approve" id="btn-done" type="button">Send to team</button>
-    </span>
+    </div>
   </div>
   ${frameTag}
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <form method="post" action="?p=${slug}" id="form-changes" style="display:none"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="changes"></form>
   <script>
     var fr=document.querySelector('iframe');
     function msg(on){try{fr.contentWindow.postMessage({__relay:'mode',on:on},'*')}catch(e){}}
-    function show(commentMode){document.getElementById('mode-default').style.display=commentMode?'none':'';document.getElementById('mode-comment').style.display=commentMode?'inline-flex':'none'}
+    function show(commentMode){document.getElementById('mode-default').style.display=commentMode?'none':'flex';document.getElementById('mode-comment').style.display=commentMode?'flex':'none'}
     document.getElementById('btn-request').onclick=function(){show(true);msg(true)};
     document.getElementById('btn-exit').onclick=function(){show(false);msg(false)};
     document.getElementById('btn-done').onclick=function(){msg(false);document.getElementById('form-changes').submit()};
-    window.addEventListener('message',function(e){if(e.data&&e.data.__relay==='count'){var c=document.getElementById('cnt');if(c)c.textContent=e.data.n?(' \\u00b7 '+e.data.n):''}});
+    window.addEventListener('message',function(e){if(e.data&&e.data.__relay==='count'){var c=document.getElementById('cnt');if(c)c.textContent=(e.data.n||0)+' note'+(e.data.n===1?'':'s')}});
+    // One-time confirmation toast after a decision, then strip ?done= from the URL.
+    (function(){
+      var done=${JSON.stringify(done)};
+      if(!done)return;
+      var t=document.getElementById('toast');
+      t.textContent=done==='approved'?'\\u2713 Site approved — thanks! Your team has been notified.':'\\u2713 Change requests sent to the team.';
+      requestAnimationFrame(function(){t.classList.add('show')});
+      setTimeout(function(){t.classList.remove('show')},4500);
+      try{history.replaceState({},'','?p='+encodeURIComponent(${JSON.stringify(slug)}))}catch(e){}
+    })();
   </script>
 </body></html>`;
 }
