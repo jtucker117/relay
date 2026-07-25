@@ -341,8 +341,8 @@ function timeAgo(iso: string): string {
   return 'just now'
 }
 
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(20,20,25,0.35)', zIndex: 40, display: 'flex', justifyContent: 'flex-end' }
-const panel: React.CSSProperties = { width: 'min(960px, 96vw)', background: 'var(--canvas)', height: '100%', overflowY: 'auto', boxShadow: '-10px 0 40px rgba(0,0,0,0.18)' }
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(20,20,25,0.5)', zIndex: 40, display: 'flex', justifyContent: 'flex-end' }
+const panel: React.CSSProperties = { width: '100vw', background: 'var(--canvas)', height: '100%', overflowY: 'auto', boxShadow: '-10px 0 40px rgba(0,0,0,0.18)' }
 const chip: React.CSSProperties = { fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 20 }
 const titleInput: React.CSSProperties = { fontFamily: 'Space Grotesk', fontSize: 28, fontWeight: 700, border: 'none', background: 'transparent', width: '100%', padding: 0, margin: '12px 0 0', outline: 'none' }
 const subInput: React.CSSProperties = { fontSize: 15, color: 'var(--ink-soft)', border: 'none', background: 'transparent', width: '100%', padding: 0, outline: 'none' }

@@ -126,7 +126,8 @@ h1, h2, h3, h4, .display, .num {
 }
 
 .deal-body {
-  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; padding: 24px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.55fr); gap: 20px; padding: 24px;
+  max-width: 1680px; margin: 0 auto;
 }
 .deal-header {
   background: var(--panel); border-bottom: 1px solid var(--line); padding: 22px 28px 20px;

@@ -254,7 +254,7 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
             <iframe
               title="Website preview"
               {...(html !== null ? { srcDoc: html } : { src: activeUrl! })}
-              style={{ width: frameW, height: 520, border: 'none', borderRadius: device === 'mobile' ? 12 : 11, background: '#fff' }}
+              style={{ width: frameW, height: 'min(78vh, 900px)', border: 'none', borderRadius: device === 'mobile' ? 12 : 11, background: '#fff' }}
               sandbox="allow-scripts allow-same-origin"
             />
           </div>
