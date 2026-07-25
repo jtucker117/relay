@@ -74,6 +74,22 @@ document.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('keydown',e=>{const k=(e.key||'').toLowerCase();
 if((e.ctrlKey||e.metaKey)&&['s','u','p'].includes(k))e.preventDefault();
 if(k==='f12')e.preventDefault();});
+// In-page anchor fix. The site is framed via srcdoc, which has no document URL,
+// so a bare "#contact" link resolves against the PARENT (relay.sitestac.com/
+// preview) and navigates the frame there — a subrequest that drops the Lax
+// gate cookie, re-showing the access-code screen. Intercept anchor clicks and
+// scroll within the frame instead of navigating.
+document.addEventListener('click',function(e){
+  var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;
+  if(!a)return;
+  var h=a.getAttribute('href')||'';
+  if(h.charAt(0)!=='#')return;
+  e.preventDefault();
+  if(h.length<2){window.scrollTo({top:0,behavior:'smooth'});return;}
+  var id=decodeURIComponent(h.slice(1));
+  var el=document.getElementById(id)||document.getElementsByName(id)[0];
+  if(el)el.scrollIntoView({behavior:'smooth'});
+},true);
 </script>`;
 
 const shell = (title: string, body: string) => html(
