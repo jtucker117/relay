@@ -262,10 +262,11 @@ Deno.serve(async (req: Request) => {
       const text = String(form.get("text") ?? "").trim().slice(0, 2000);
       const anchor = (String(form.get("anchor") ?? "").slice(0, 2000)) || null;
       if (!text || !isFinite(x) || !isFinite(y)) return json({ error: "invalid" }, 400);
-      const { data: ins, error } = await supa.from("preview_comments").insert({
-        slug, org_id: rec.org_id,
-        x_pct: Math.min(1, Math.max(0, x)), y_pct: Math.max(0, y), text, anchor,
-      }).select("id").single();
+      const base = { slug, org_id: rec.org_id, x_pct: Math.min(1, Math.max(0, x)), y_pct: Math.max(0, y), text };
+      let { data: ins, error } = await supa.from("preview_comments").insert({ ...base, anchor }).select("id").single();
+      if (error) { // anchor column may not exist yet (migration 0004) — save without it
+        ({ data: ins, error } = await supa.from("preview_comments").insert(base).select("id").single());
+      }
       if (error) return json({ error: error.message }, 500);
       return json({ id: ins?.id });
     }
@@ -305,9 +306,18 @@ Deno.serve(async (req: Request) => {
     const { data: file } = await supa.storage.from("previews").download(`${slug}.html`);
     if (!file) return shell("Missing", `<div class="wrap"><h1>Preview content missing.</h1></div>`);
     let site = stripCfBeacon(await file.text());
-    // Embed existing change-request pins + the annotation engine.
-    const { data: cmts } = await supa.from("preview_comments")
-      .select("id,x_pct,y_pct,text,resolved").eq("slug", slug).order("created_at", { ascending: true });
+    // Embed existing change-request pins + the annotation engine. Tolerate the
+    // anchor column not existing yet (migration 0004) by retrying without it.
+    let cmts: unknown[] | null = null;
+    {
+      const r = await supa.from("preview_comments")
+        .select("id,x_pct,y_pct,text,resolved,anchor").eq("slug", slug).order("created_at", { ascending: true });
+      if (r.error) {
+        const r2 = await supa.from("preview_comments")
+          .select("id,x_pct,y_pct,text,resolved").eq("slug", slug).order("created_at", { ascending: true });
+        cmts = r2.data;
+      } else cmts = r.data;
+    }
     const dataScript = `<script>window.__relayComments=${JSON.stringify(cmts ?? []).replace(/</g, "\\u003c")}</script>`;
     const inject = dataScript + DETERRENT + ANNOTATE;
     site = site.includes("</body>") ? site.replace("</body>", `${inject}</body>`) : site + inject;
