@@ -79,7 +79,14 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
       supabase.from('profiles').select('user_id,name,email,role,notify_change_requests').eq('org_id', orgId),
       supabase.from('invites').select('id,email,name,role').eq('org_id', orgId),
     ])
-    setMembers((m.data as Member[]) ?? [])
+    // Tolerate the notify_change_requests column not existing yet (before the
+    // migration runs) — fall back to the base columns so the team list still loads.
+    if (m.error) {
+      const base = await supabase.from('profiles').select('user_id,name,email,role').eq('org_id', orgId)
+      setMembers(((base.data as Omit<Member, 'notify_change_requests'>[]) ?? []).map((x) => ({ ...x, notify_change_requests: false })))
+    } else {
+      setMembers((m.data as Member[]) ?? [])
+    }
     setInvites((i.data as Invite[]) ?? [])
   }, [orgId])
 
