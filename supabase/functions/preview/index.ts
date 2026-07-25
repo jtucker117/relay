@@ -30,6 +30,40 @@ function html(body: string, extra: Record<string, string> = {}): Response {
   return new Response(body, { headers: h });
 }
 
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+}
+
+// Email the workspace when a client requests changes (best-effort, via Resend).
+async function notifyChanges(rec: { org_id?: string | null; company?: string | null }, slug: string) {
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  if (!apiKey || !rec.org_id) return;
+  const from = Deno.env.get("RESEND_FROM") || "Relay <onboarding@resend.dev>";
+  const { data: people } = await supa.from("profiles").select("email").eq("org_id", rec.org_id);
+  const to = (people ?? []).map((p: { email?: string }) => p.email).filter(Boolean) as string[];
+  if (!to.length) return;
+  const { count } = await supa.from("preview_comments").select("id", { count: "exact", head: true }).eq("slug", slug);
+  const n = count ?? 0;
+  const company = rec.company || "A client";
+  const link = `https://relay.sitestac.com/preview?p=${slug}`;
+  const subject = `${company} requested changes` + (n ? ` (${n} note${n === 1 ? "" : "s"})` : "");
+  const body = `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;padding:28px 20px;color:#1A1A1E">
+    <b style="font-size:16px">Relay</b>
+    <div style="background:#FBFBFA;border:1px solid #E4E3DE;border-radius:14px;padding:24px;margin-top:16px">
+      <p style="margin:0 0 10px;font-size:15px"><b>${esc(company)}</b> reviewed their site preview and requested changes.</p>
+      <p style="margin:0 0 18px;color:#5C5C63;font-size:14px">${n} note${n === 1 ? "" : "s"} pinned on the site.</p>
+      <a href="${link}" style="display:inline-block;background:#5B4FE9;color:#fff;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:10px">Open the preview</a>
+    </div>
+  </div>`;
+  await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to, subject, html: body }),
+  });
+}
+
 async function sign(data: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", enc.encode(SERVICE_ROLE),
     { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -88,6 +122,62 @@ document.addEventListener('click',function(e){
 },true);
 </script>`;
 
+// Client annotation engine, injected into the framed site. Renders existing
+// pins (window.__relayComments) and, when the portal sends {__relay:'mode',on},
+// lets the client click anywhere to drop a pin + note (POSTed as _action=comment).
+// Bundled sites replace documentElement after load, so all state lives on
+// window/document (which persist) and a watchdog re-mounts the pin layer.
+const ANNOTATE = `<script>(function(){
+  var slug=(new URLSearchParams(location.search)).get('p')||'';
+  var comments=(window.__relayComments||[]).slice();
+  var mode=false, LID='__relay_pins';
+  function docH(){var d=document;return Math.max(d.documentElement.scrollHeight,d.body?d.body.scrollHeight:0,d.documentElement.clientHeight)}
+  function docW(){return document.documentElement.clientWidth||window.innerWidth}
+  function layer(){var l=document.getElementById(LID);if(!l){l=document.createElement('div');l.id=LID;l.style.cssText='position:absolute;top:0;left:0;width:100%;height:0;z-index:2147482000;pointer-events:none';(document.body||document.documentElement).appendChild(l)}return l}
+  function pin(c,n){
+    var H=docH(),p=document.createElement('div');
+    p.style.cssText='position:absolute;left:'+(c.x_pct*100)+'%;top:'+(c.y_pct*H)+'px;transform:translate(-50%,-100%);pointer-events:auto';
+    var dot=document.createElement('div');
+    dot.style.cssText='min-width:24px;height:24px;padding:0 7px;border-radius:13px 13px 13px 3px;background:'+(c.resolved?'#8A8A90':'#E0932E')+';color:#fff;font:700 12px/24px -apple-system,sans-serif;text-align:center;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4);cursor:default';
+    dot.textContent=n;
+    var tip=document.createElement('div');
+    tip.style.cssText='position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);background:#1A1A1E;color:#fff;font:13px/1.45 -apple-system,sans-serif;padding:8px 11px;border-radius:9px;width:max-content;max-width:240px;white-space:pre-wrap;display:none;box-shadow:0 6px 18px rgba(0,0,0,.45)';
+    tip.textContent=c.text;
+    dot.onmouseenter=function(){tip.style.display='block'};dot.onmouseleave=function(){tip.style.display='none'};
+    p.appendChild(tip);p.appendChild(dot);return p;
+  }
+  function render(){var l=layer();l.innerHTML='';for(var i=0;i<comments.length;i++)l.appendChild(pin(comments[i],i+1));try{parent.postMessage({__relay:'count',n:comments.length},'*')}catch(e){}}
+  function setMode(on){mode=on;document.documentElement.style.cursor=on?'crosshair':'';var h=document.getElementById('__relay_hint');if(on&&!h){h=document.createElement('div');h.id='__relay_hint';h.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#5B4FE9;color:#fff;font:600 13px/1 -apple-system,sans-serif;padding:11px 18px;border-radius:22px;z-index:2147483600;box-shadow:0 6px 18px rgba(0,0,0,.35);pointer-events:none';h.textContent='Click anywhere on the site to leave a note';document.body.appendChild(h)}else if(!on&&h){h.remove()}}
+  function closeComposer(){var c=document.getElementById('__relay_composer');if(c)c.remove()}
+  function composer(x_pct,y_pct,pageY){
+    closeComposer();
+    var box=document.createElement('div');box.id='__relay_composer';
+    box.style.cssText='position:absolute;left:'+(x_pct*100)+'%;top:'+pageY+'px;transform:translate(-50%,12px);z-index:2147483600;background:#fff;border:1px solid #E4E3DE;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.28);padding:10px;width:250px;font-family:-apple-system,sans-serif;pointer-events:auto';
+    var ta=document.createElement('textarea');ta.placeholder='What should change here?';ta.style.cssText='width:100%;height:66px;border:1px solid #E4E3DE;border-radius:8px;padding:8px;font:13px/1.4 -apple-system,sans-serif;resize:none;box-sizing:border-box';
+    var row=document.createElement('div');row.style.cssText='display:flex;gap:6px;margin-top:8px';
+    var save=document.createElement('button');save.type='button';save.textContent='Add note';save.style.cssText='flex:1;background:#5B4FE9;color:#fff;border:none;border-radius:8px;padding:8px;font-weight:600;cursor:pointer';
+    var cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.style.cssText='background:#F1F0EC;border:none;border-radius:8px;padding:8px 10px;cursor:pointer';
+    row.appendChild(save);row.appendChild(cancel);box.appendChild(ta);box.appendChild(row);document.body.appendChild(box);ta.focus();
+    cancel.onclick=closeComposer;
+    save.onclick=function(){var t=ta.value.trim();if(!t)return;save.textContent='Saving…';save.disabled=true;
+      fetch('?p='+encodeURIComponent(slug),{method:'POST',credentials:'same-origin',headers:{'content-type':'application/x-www-form-urlencoded'},body:'_action=comment&x='+x_pct+'&y='+y_pct+'&text='+encodeURIComponent(t)})
+      .then(function(r){return r.json()}).then(function(res){comments.push({x_pct:x_pct,y_pct:y_pct,text:t,resolved:false,id:res&&res.id});closeComposer();render()})
+      .catch(function(){save.textContent='Add note';save.disabled=false});
+    };
+  }
+  document.addEventListener('click',function(e){
+    if(!mode)return;var t=e.target;
+    if(t&&t.closest&&t.closest('#__relay_composer,#'+LID))return;
+    e.preventDefault();e.stopPropagation();
+    composer(e.clientX/docW(),e.pageY/docH(),e.pageY);
+  },true);
+  window.addEventListener('message',function(e){if(e.data&&e.data.__relay==='mode')setMode(!!e.data.on)});
+  window.addEventListener('resize',render);
+  setInterval(function(){var l=document.getElementById(LID);if(!l||!l.isConnected)render()},1000);
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',render);else render();
+  setTimeout(render,1500);setTimeout(render,3500);
+})();</script>`;
+
 const shell = (title: string, body: string) => html(
   `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><style>
@@ -120,9 +210,26 @@ Deno.serve(async (req: Request) => {
 
   if (req.method === "POST") {
     const form = await req.formData();
+    const unlockedForPost = !gated || (await cookieValid(readCookie(req, cookieName), slug));
+
+    // Client dropped a change-request pin. Requires an unlocked session.
+    if (form.get("_action") === "comment") {
+      if (!unlockedForPost) return json({ error: "locked" }, 401);
+      const x = Number(form.get("x")), y = Number(form.get("y"));
+      const text = String(form.get("text") ?? "").trim().slice(0, 2000);
+      if (!text || !isFinite(x) || !isFinite(y)) return json({ error: "invalid" }, 400);
+      const { data: ins, error } = await supa.from("preview_comments").insert({
+        slug, org_id: rec.org_id,
+        x_pct: Math.min(1, Math.max(0, x)), y_pct: Math.max(0, y), text,
+      }).select("id").single();
+      if (error) return json({ error: error.message }, 500);
+      return json({ id: ins?.id });
+    }
+
     if (form.get("_action") === "decide") {
       const status = form.get("status") === "approved" ? "approved" : "changes";
       await supa.from("previews").update({ status, decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("slug", slug);
+      if (status === "changes") { try { await notifyChanges(rec, slug); } catch (_e) { /* email is best-effort */ } }
       // Relative redirect so it works whether served at supabase.co/... or proxied at relay.sitestac.com/preview.
       return new Response(null, { status: 303, headers: { Location: `?p=${slug}` } });
     }
@@ -153,7 +260,12 @@ Deno.serve(async (req: Request) => {
     const { data: file } = await supa.storage.from("previews").download(`${slug}.html`);
     if (!file) return shell("Missing", `<div class="wrap"><h1>Preview content missing.</h1></div>`);
     let site = stripCfBeacon(await file.text());
-    site = site.includes("</body>") ? site.replace("</body>", `${DETERRENT}</body>`) : site + DETERRENT;
+    // Embed existing change-request pins + the annotation engine.
+    const { data: cmts } = await supa.from("preview_comments")
+      .select("id,x_pct,y_pct,text,resolved").eq("slug", slug).order("created_at", { ascending: true });
+    const dataScript = `<script>window.__relayComments=${JSON.stringify(cmts ?? []).replace(/</g, "\\u003c")}</script>`;
+    const inject = dataScript + DETERRENT + ANNOTATE;
+    site = site.includes("</body>") ? site.replace("</body>", `${inject}</body>`) : site + inject;
     return html(site, { "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'" });
   }
 
@@ -201,18 +313,37 @@ function portalHtml(slug: string, company: string, statusLabel: string, frameTag
 .bar b{font-size:14px}.chip{font-size:12px;background:#26262C;color:#cfcfe0;padding:3px 9px;border-radius:20px}
 .spacer{flex:1}
 .act{border:none;border-radius:9px;padding:8px 14px;font-weight:600;font-size:13px;cursor:pointer}
-.approve{background:#3E9E6E;color:#fff}.changes{background:#E0932E;color:#fff;margin-right:8px}
+.approve{background:#3E9E6E;color:#fff}.changes{background:#E0932E;color:#fff}.ghost{background:#26262C;color:#fff}
+.act+.act{margin-left:8px}
 iframe{flex:1;width:100%;border:none;background:#fff}
-form{display:inline}
+#mode-comment{align-items:center;gap:12px}
+.hint{color:#cfcfe0;font-size:13px}
 </style>
 <script>document.addEventListener('contextmenu',e=>e.preventDefault());</script></head>
 <body>
   <div class="bar">
-    <b>${company}</b><span class="chip">${statusLabel}</span>
+    <b>${company}</b><span class="chip" id="statuschip">${statusLabel}</span>
     <span class="spacer"></span>
-    <form method="post" action="?p=${slug}"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="changes"><button class="act changes" type="submit">Request changes</button></form>
-    <form method="post" action="?p=${slug}"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="approved"><button class="act approve" type="submit">Approve this site</button></form>
+    <span id="mode-default">
+      <button class="act changes" id="btn-request" type="button">Request changes</button>
+      <form method="post" action="?p=${slug}" style="display:inline"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="approved"><button class="act approve" type="submit">Approve this site</button></form>
+    </span>
+    <span id="mode-comment" style="display:none">
+      <span class="hint">Click the site to pin a note<span id="cnt"></span></span>
+      <button class="act ghost" id="btn-exit" type="button">Cancel</button>
+      <button class="act approve" id="btn-done" type="button">Send to team</button>
+    </span>
   </div>
   ${frameTag}
+  <form method="post" action="?p=${slug}" id="form-changes" style="display:none"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="changes"></form>
+  <script>
+    var fr=document.querySelector('iframe');
+    function msg(on){try{fr.contentWindow.postMessage({__relay:'mode',on:on},'*')}catch(e){}}
+    function show(commentMode){document.getElementById('mode-default').style.display=commentMode?'none':'';document.getElementById('mode-comment').style.display=commentMode?'inline-flex':'none'}
+    document.getElementById('btn-request').onclick=function(){show(true);msg(true)};
+    document.getElementById('btn-exit').onclick=function(){show(false);msg(false)};
+    document.getElementById('btn-done').onclick=function(){msg(false);document.getElementById('form-changes').submit()};
+    window.addEventListener('message',function(e){if(e.data&&e.data.__relay==='count'){var c=document.getElementById('cnt');if(c)c.textContent=e.data.n?(' \\u00b7 '+e.data.n):''}});
+  </script>
 </body></html>`;
 }

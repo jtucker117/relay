@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthProvider'
 import { pkg } from '../lib/catalog'
 import type { Deal } from '../lib/types'
+
+type PreviewComment = { id: string; text: string; resolved: boolean; created_at: string }
 
 // Branded share URL — proxied to the Supabase preview function by the Cloudflare Worker.
 const FN_BASE = `${window.location.origin}/preview`
@@ -40,7 +42,26 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
   const [copied, setCopied] = useState(false)
   const [code, setCode] = useState<string | null>(null)
   const [views, setViews] = useState<{ count: number; last: string | null } | null>(null)
+  const [reqs, setReqs] = useState<PreviewComment[]>([])
   const shareUrl = slug ? `${FN_BASE}?p=${slug}` : ''
+
+  // Load the client's change-request pins for the current published preview.
+  const loadReqs = useCallback((s: string | null) => {
+    if (!s) { setReqs([]); return }
+    supabase.from('preview_comments').select('id,text,resolved,created_at')
+      .eq('slug', s).order('created_at', { ascending: true })
+      .then(({ data }) => setReqs((data as PreviewComment[]) ?? []))
+  }, [])
+  useEffect(() => { loadReqs(slug) }, [slug, loadReqs])
+
+  async function resolveReq(id: string, resolved: boolean) {
+    setReqs((r) => r.map((x) => (x.id === id ? { ...x, resolved } : x)))
+    await supabase.from('preview_comments').update({ resolved }).eq('id', id)
+  }
+  async function deleteReq(id: string) {
+    setReqs((r) => r.filter((x) => x.id !== id))
+    await supabase.from('preview_comments').delete().eq('id', id)
+  }
 
   // Restore the saved draft + any published share link for this deal on mount.
   useEffect(() => {
@@ -248,6 +269,7 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
               </p>
             </div>
           ) : (
+            <>
             <div style={sharePanel}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: live ? 'var(--green-2)' : 'var(--ink-muted)' }} />
@@ -287,11 +309,54 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
               )}
               {activeUrl && <p style={{ color: 'var(--amber)', fontSize: 12, marginTop: 8 }}>Heads-up: this is an external URL — the code lives on their server, so it isn't code-protected.</p>}
             </div>
+
+            {/* Client change requests (pins dropped on the preview) */}
+            <div style={{ ...sharePanel, marginTop: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: reqs.length ? 10 : 0 }}>
+                <b style={{ fontSize: 13 }}>Change requests</b>
+                <span style={countPill}>{reqs.filter((r) => !r.resolved).length}</span>
+                <button onClick={() => loadReqs(slug)} style={{ ...ghostBtn, marginLeft: 'auto', padding: '4px 10px', fontSize: 12 }}>Refresh</button>
+                <a href={shareUrl} target="_blank" rel="noreferrer" style={{ ...ghostBtn, padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}>View pins ↗</a>
+              </div>
+              {reqs.length === 0 ? (
+                <p style={{ color: 'var(--ink-muted)', fontSize: 12.5, margin: 0 }}>
+                  No change requests yet. When the client opens the link and pins notes, they'll show here.
+                </p>
+              ) : (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {reqs.map((r, i) => (
+                    <div key={r.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', opacity: r.resolved ? 0.55 : 1 }}>
+                      <span style={{ ...reqNum, background: r.resolved ? 'var(--ink-muted)' : '#E0932E' }}>{i + 1}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, lineHeight: 1.4, textDecoration: r.resolved ? 'line-through' : 'none' }}>{r.text}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2 }}>
+                          {new Date(r.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                        </div>
+                      </div>
+                      <button onClick={() => resolveReq(r.id, !r.resolved)} style={{ ...ghostBtn, padding: '4px 9px', fontSize: 12 }}>
+                        {r.resolved ? 'Reopen' : 'Done'}
+                      </button>
+                      <button onClick={() => deleteReq(r.id)} style={{ ...ghostBtn, padding: '4px 9px', fontSize: 12, color: '#c0392b' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            </>
           )}
         </>
       )}
     </div>
   )
+}
+
+const countPill: React.CSSProperties = {
+  fontSize: 11, fontWeight: 600, background: 'var(--rail)', border: '1px solid var(--line)',
+  borderRadius: 20, padding: '1px 8px', color: 'var(--ink-soft)',
+}
+const reqNum: React.CSSProperties = {
+  flexShrink: 0, width: 20, height: 20, borderRadius: 10, color: '#fff',
+  fontSize: 11, fontWeight: 700, display: 'grid', placeItems: 'center', marginTop: 1,
 }
 
 const aiBtn: React.CSSProperties = {
