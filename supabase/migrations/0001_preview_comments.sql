@@ -25,12 +25,12 @@ alter table public.preview_comments enable row level security;
 -- belong to their own workspace.
 drop policy if exists "read own org preview comments" on public.preview_comments;
 create policy "read own org preview comments" on public.preview_comments
-  for select using (org_id in (select org_id from public.profiles where id = auth.uid()));
+  for select using (org_id in (select org_id from public.profiles where user_id = auth.uid()));
 
 drop policy if exists "manage own org preview comments" on public.preview_comments;
 create policy "manage own org preview comments" on public.preview_comments
-  for update using (org_id in (select org_id from public.profiles where id = auth.uid()));
+  for update using (org_id in (select org_id from public.profiles where user_id = auth.uid()));
 
 drop policy if exists "delete own org preview comments" on public.preview_comments;
 create policy "delete own org preview comments" on public.preview_comments
-  for delete using (org_id in (select org_id from public.profiles where id = auth.uid()));
+  for delete using (org_id in (select org_id from public.profiles where user_id = auth.uid()));
