@@ -316,7 +316,7 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
                 <b style={{ fontSize: 13 }}>Change requests</b>
                 <span style={countPill}>{reqs.filter((r) => !r.resolved).length}</span>
                 <button onClick={() => loadReqs(slug)} style={{ ...ghostBtn, marginLeft: 'auto', padding: '4px 10px', fontSize: 12 }}>Refresh</button>
-                <a href={shareUrl} target="_blank" rel="noreferrer" style={{ ...ghostBtn, padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}>View pins ↗</a>
+                <a href={`${shareUrl}&review=1`} target="_blank" rel="noreferrer" style={{ ...ghostBtn, padding: '4px 10px', fontSize: 12, textDecoration: 'none' }}>Review ↗</a>
               </div>
               {reqs.length === 0 ? (
                 <p style={{ color: 'var(--ink-muted)', fontSize: 12.5, margin: 0 }}>

@@ -169,6 +169,7 @@ const ANNOTATE = `<script>(function(){
   }
   function pin(c,n){
     var p=document.createElement('div');
+    p.id='__relay_pin_'+(c.id||n);
     p.style.cssText='position:absolute;transform:translate(-50%,-100%);pointer-events:auto';
     place(p,c);
     var dot=document.createElement('div');
@@ -180,7 +181,24 @@ const ANNOTATE = `<script>(function(){
     dot.onmouseenter=function(){tip.style.display='block'};dot.onmouseleave=function(){tip.style.display='none'};
     p.appendChild(tip);p.appendChild(dot);return p;
   }
-  function render(){var l=layer();l.innerHTML='';for(var i=0;i<comments.length;i++)l.appendChild(pin(comments[i],i+1));try{parent.postMessage({__relay:'count',n:comments.length},'*')}catch(e){}}
+  function render(){var l=layer();l.innerHTML='';for(var i=0;i<comments.length;i++)l.appendChild(pin(comments[i],i+1));
+    try{parent.postMessage({__relay:'count',n:comments.length},'*')}catch(e){}
+    try{parent.postMessage({__relay:'list',items:comments.map(function(c,i){
+      var where='',a=c.anchor;if(a&&typeof a==='string'){try{a=JSON.parse(a)}catch(e){a=null}}
+      if(a&&a.sel){try{var el=document.querySelector(a.sel);if(el)where=(el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,70);}catch(e){}}
+      return{id:c.id,n:i+1,text:c.text,resolved:!!c.resolved,where:where};
+    })},'*')}catch(e){}}
+  function scrollToPin(id){
+    var c=null,idx=0;for(var i=0;i<comments.length;i++){if(comments[i].id===id){c=comments[i];idx=i;break;}}
+    if(!c)return;
+    var a=c.anchor;if(a&&typeof a==='string'){try{a=JSON.parse(a)}catch(e){a=null}}
+    var el=null;if(a&&a.sel){try{el=document.querySelector(a.sel)}catch(e){}}
+    if(el){el.scrollIntoView({behavior:'smooth',block:'center'});}
+    else{window.scrollTo({top:Math.max(0,c.y_pct*docH()-window.innerHeight/2),behavior:'smooth'});}
+    setTimeout(function(){var pe=document.getElementById('__relay_pin_'+(c.id||idx+1));
+      if(pe){var b=pe.style.transform;pe.style.transition='transform .18s';pe.style.transform=b+' scale(1.6)';
+      setTimeout(function(){pe.style.transform=b;},480);}},420);
+  }
   function setMode(on){mode=on;document.documentElement.style.cursor=on?'crosshair':'';var h=document.getElementById('__relay_hint');if(on&&!h){h=document.createElement('div');h.id='__relay_hint';h.style.cssText='position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#5B4FE9;color:#fff;font:600 13px/1 -apple-system,sans-serif;padding:11px 18px;border-radius:22px;z-index:2147483600;box-shadow:0 6px 18px rgba(0,0,0,.35);pointer-events:none';h.textContent='Click anywhere on the site to leave a note';document.body.appendChild(h)}else if(!on&&h){h.remove()}}
   function closeComposer(){var c=document.getElementById('__relay_composer');if(c)c.remove()}
   function composer(x_pct,y_pct,pageY,anchor){
@@ -214,7 +232,9 @@ const ANNOTATE = `<script>(function(){
         oy:r.height?(e.clientY-r.top)/r.height:0.5});}
     composer(e.clientX/docW(),e.pageY/docH(),e.pageY,anchor);
   },true);
-  window.addEventListener('message',function(e){if(e.data&&e.data.__relay==='mode')setMode(!!e.data.on)});
+  window.addEventListener('message',function(e){if(!e.data)return;
+    if(e.data.__relay==='mode')setMode(!!e.data.on);
+    else if(e.data.__relay==='scrollto')scrollToPin(e.data.id);});
   window.addEventListener('resize',render);
   setInterval(function(){var l=document.getElementById(LID);if(!l||!l.isConnected)render()},1000);
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',render);else render();
@@ -345,7 +365,8 @@ Deno.serve(async (req: Request) => {
   }).eq("slug", slug);
 
   const done = url.searchParams.get("done"); // 'changes' | 'approved' | null (one-time toast)
-  return html(portalHtml(slug, esc(rec.company), frameTag, done === "approved" ? "approved" : done === "changes" ? "changes" : ""));
+  const review = url.searchParams.get("review") === "1"; // internal review mode (checklist + export)
+  return html(portalHtml(slug, esc(rec.company), frameTag, done === "approved" ? "approved" : done === "changes" ? "changes" : "", review));
 });
 
 function gateHtml(slug: string, company: string, err: boolean) {
@@ -360,9 +381,24 @@ function gateHtml(slug: string, company: string, err: boolean) {
   </div>`;
 }
 
-function portalHtml(slug: string, company: string, frameTag: string, done: string) {
+function portalHtml(slug: string, company: string, frameTag: string, done: string, review: boolean) {
+  const barActions = review
+    ? `<div class="acts"><span class="cnt" id="rvcount">0 change requests</span><button class="act ghost" id="rv-copy" type="button">Copy for Claude</button></div>`
+    : `<div class="acts" id="mode-default">
+      <button class="act changes" id="btn-request" type="button">Request changes</button>
+      <form method="post" action="?p=${slug}"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="approved"><button class="act approve" type="submit">Approve</button></form>
+    </div>
+    <div class="acts" id="mode-comment" style="display:none">
+      <span class="cnt" id="cnt">0 notes</span>
+      <button class="act ghost" id="btn-exit" type="button">Cancel</button>
+      <button class="act approve" id="btn-done" type="button">Send to team</button>
+    </div>`;
+  const reviewAside = review ? `<aside class="rv" id="rv">
+      <div class="rvempty" id="rvempty">No change requests yet.</div>
+      <div id="rvlist"></div>
+    </aside>` : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Preview for ${company}</title><style>
+<title>${review ? "Review — " : "Preview for "}${company}</title><style>
 *{box-sizing:border-box}html,body{margin:0;height:100%}
 body{font-family:system-ui,-apple-system,sans-serif;background:#161619;display:flex;flex-direction:column}
 .bar{display:flex;align-items:center;gap:10px;padding:9px 14px;color:#fff;background:#161619;border-bottom:1px solid #26262C}
@@ -371,51 +407,94 @@ body{font-family:system-ui,-apple-system,sans-serif;background:#161619;display:f
 .act{border:none;border-radius:9px;padding:9px 13px;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;line-height:1}
 .approve{background:#3E9E6E;color:#fff}.changes{background:#E0932E;color:#fff}.ghost{background:#2C2C33;color:#fff}
 .cnt{font-size:12px;color:#cfcfe0;background:#26262C;padding:4px 9px;border-radius:20px;white-space:nowrap}
+.stage{flex:1;display:flex;min-height:0}
 iframe{flex:1;width:100%;border:none;background:#fff}
 form{display:inline}
+.rv{width:340px;flex-shrink:0;background:#1B1B1F;border-left:1px solid #26262C;color:#eaeaf0;overflow-y:auto;padding:12px}
+.rvempty{color:#8A8A90;font-size:13px;padding:8px 6px}
+.rvitem{display:flex;gap:9px;padding:10px;border:1px solid #2A2A31;border-radius:11px;margin-bottom:8px;cursor:pointer;transition:background .12s,border-color .12s}
+.rvitem:hover{background:#232329;border-color:#3A3A44}
+.rvitem.done{opacity:.5}
+.rvnum{flex-shrink:0;width:22px;height:22px;border-radius:11px;background:#E0932E;color:#fff;font:700 12px/22px -apple-system,sans-serif;text-align:center}
+.rvitem.done .rvnum{background:#8A8A90}
+.rvtext{font-size:13.5px;line-height:1.4}.rvtext.done{text-decoration:line-through}
+.rvwhere{font-size:11.5px;color:#8A8A90;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rvchk{margin-top:2px;accent-color:#3E9E6E}
 .toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-18px);background:#3E9E6E;color:#fff;font:600 14px/1.3 -apple-system,sans-serif;padding:12px 18px;border-radius:24px;box-shadow:0 10px 28px rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:opacity .35s,transform .35s;z-index:2147483647;max-width:calc(100% - 28px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
-@media(max-width:560px){
-  .bar{padding:8px 11px;gap:8px}
-  .co{font-size:13px}
-  .act{padding:9px 12px;font-size:13px}
-  .cnt{display:none}
+@media(max-width:640px){
+  .bar{padding:8px 11px;gap:8px}.co{font-size:13px}.act{padding:9px 12px;font-size:13px}.cnt{display:none}
+  .stage{flex-direction:column}
+  .rv{width:100%;height:42vh;border-left:none;border-top:1px solid #26262C}
 }
 </style>
 <script>document.addEventListener('contextmenu',e=>e.preventDefault());</script></head>
 <body>
   <div class="bar">
-    <span class="co">${company}</span>
-    <div class="acts" id="mode-default">
-      <button class="act changes" id="btn-request" type="button">Request changes</button>
-      <form method="post" action="?p=${slug}"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="approved"><button class="act approve" type="submit">Approve</button></form>
-    </div>
-    <div class="acts" id="mode-comment" style="display:none">
-      <span class="cnt" id="cnt">0 notes</span>
-      <button class="act ghost" id="btn-exit" type="button">Cancel</button>
-      <button class="act approve" id="btn-done" type="button">Send to team</button>
-    </div>
+    <span class="co">${review ? "Reviewing: " : ""}${company}</span>
+    ${barActions}
   </div>
-  ${frameTag}
+  <div class="stage">
+    ${frameTag}
+    ${reviewAside}
+  </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <form method="post" action="?p=${slug}" id="form-changes" style="display:none"><input type="hidden" name="_action" value="decide"><input type="hidden" name="status" value="changes"></form>
   <script>
+    var REVIEW=${review ? "true" : "false"}, SLUG=${JSON.stringify(slug)}, COMPANY=${JSON.stringify(company)};
     var fr=document.querySelector('iframe');
-    function msg(on){try{fr.contentWindow.postMessage({__relay:'mode',on:on},'*')}catch(e){}}
-    function show(commentMode){document.getElementById('mode-default').style.display=commentMode?'none':'flex';document.getElementById('mode-comment').style.display=commentMode?'flex':'none'}
-    document.getElementById('btn-request').onclick=function(){show(true);msg(true)};
-    document.getElementById('btn-exit').onclick=function(){show(false);msg(false)};
-    document.getElementById('btn-done').onclick=function(){msg(false);document.getElementById('form-changes').submit()};
-    window.addEventListener('message',function(e){if(e.data&&e.data.__relay==='count'){var c=document.getElementById('cnt');if(c)c.textContent=(e.data.n||0)+' note'+(e.data.n===1?'':'s')}});
+    function msg(o){try{fr.contentWindow.postMessage(o,'*')}catch(e){}}
+    var LIST=[];
+    function render(){
+      var box=document.getElementById('rvlist'),empty=document.getElementById('rvempty');
+      var cnt=document.getElementById('rvcount');
+      if(cnt)cnt.textContent=LIST.length+' change request'+(LIST.length===1?'':'s');
+      if(!box)return;
+      empty.style.display=LIST.length?'none':'block';
+      box.innerHTML='';
+      LIST.forEach(function(it){
+        var done=localStorage.getItem('rvdone:'+it.id)==='1';
+        var row=document.createElement('div');row.className='rvitem'+(done?' done':'');
+        var chk=document.createElement('input');chk.type='checkbox';chk.className='rvchk';chk.checked=done;
+        chk.onclick=function(ev){ev.stopPropagation();localStorage.setItem('rvdone:'+it.id,chk.checked?'1':'0');render();};
+        var mid=document.createElement('div');mid.style.flex='1';mid.style.minWidth='0';
+        mid.innerHTML='<div class="rvtext'+(done?' done':'')+'"></div>'+(it.where?'<div class="rvwhere"></div>':'');
+        mid.querySelector('.rvtext').textContent=it.n+'. '+it.text;
+        if(it.where)mid.querySelector('.rvwhere').textContent='on: '+it.where;
+        var num=document.createElement('div');num.className='rvnum';num.textContent=it.n;
+        row.appendChild(chk);row.appendChild(num);row.appendChild(mid);
+        row.onclick=function(){msg({__relay:'scrollto',id:it.id});};
+        box.appendChild(row);
+      });
+    }
+    function exportText(){
+      var lines=['Change requests for the '+COMPANY+' website preview.','Preview: '+location.origin+'/preview?p='+SLUG,''];
+      LIST.forEach(function(it){lines.push(it.n+'. '+it.text+(it.where?'  (on: "'+it.where+'")':''));});
+      lines.push('','Please implement each change on the site.');
+      return lines.join(String.fromCharCode(10));
+    }
+    if(REVIEW){
+      var copy=document.getElementById('rv-copy');
+      copy.onclick=function(){var t=exportText();(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){copy.textContent='Copied!';setTimeout(function(){copy.textContent='Copy for Claude';},1400);},function(){window.prompt('Copy the change requests:',t);});};
+    }else{
+      function show(cm){document.getElementById('mode-default').style.display=cm?'none':'flex';document.getElementById('mode-comment').style.display=cm?'flex':'none'}
+      document.getElementById('btn-request').onclick=function(){show(true);msg({__relay:'mode',on:true})};
+      document.getElementById('btn-exit').onclick=function(){show(false);msg({__relay:'mode',on:false})};
+      document.getElementById('btn-done').onclick=function(){msg({__relay:'mode',on:false});document.getElementById('form-changes').submit()};
+    }
+    window.addEventListener('message',function(e){
+      if(!e.data)return;
+      if(e.data.__relay==='count'){var c=document.getElementById('cnt');if(c)c.textContent=(e.data.n||0)+' note'+(e.data.n===1?'':'s');}
+      else if(e.data.__relay==='list'){LIST=e.data.items||[];render();}
+    });
     // One-time confirmation toast after a decision, then strip ?done= from the URL.
     (function(){
-      var done=${JSON.stringify(done)};
-      if(!done)return;
+      var done=${JSON.stringify(done)};if(!done)return;
       var t=document.getElementById('toast');
       t.textContent=done==='approved'?'\\u2713 Site approved — thanks! Your team has been notified.':'\\u2713 Change requests sent to the team.';
       requestAnimationFrame(function(){t.classList.add('show')});
       setTimeout(function(){t.classList.remove('show')},4500);
-      try{history.replaceState({},'','?p='+encodeURIComponent(${JSON.stringify(slug)}))}catch(e){}
+      try{history.replaceState({},'','?p='+encodeURIComponent(SLUG))}catch(e){}
     })();
   </script>
 </body></html>`;
