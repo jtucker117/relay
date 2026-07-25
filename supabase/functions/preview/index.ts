@@ -161,8 +161,11 @@ const ANNOTATE = `<script>(function(){
     cancel.onclick=closeComposer;
     save.onclick=function(){var t=ta.value.trim();if(!t)return;save.textContent='Saving…';save.disabled=true;
       fetch('?p='+encodeURIComponent(slug),{method:'POST',credentials:'same-origin',headers:{'content-type':'application/x-www-form-urlencoded'},body:'_action=comment&x='+x_pct+'&y='+y_pct+'&text='+encodeURIComponent(t)})
-      .then(function(r){return r.json()}).then(function(res){comments.push({x_pct:x_pct,y_pct:y_pct,text:t,resolved:false,id:res&&res.id});closeComposer();render()})
-      .catch(function(){save.textContent='Add note';save.disabled=false});
+      .then(function(r){return r.json()}).then(function(res){
+        if(!res||res.error||!res.id){save.textContent='Try again';save.disabled=false;save.style.background='#c0392b';return}
+        comments.push({x_pct:x_pct,y_pct:y_pct,text:t,resolved:false,id:res.id});closeComposer();render();
+      })
+      .catch(function(){save.textContent='Try again';save.disabled=false;save.style.background='#c0392b'});
     };
   }
   document.addEventListener('click',function(e){
