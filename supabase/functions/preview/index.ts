@@ -41,8 +41,17 @@ async function notifyChanges(rec: { org_id?: string | null; company?: string | n
   const apiKey = Deno.env.get("RESEND_API_KEY");
   if (!apiKey || !rec.org_id) return;
   const from = Deno.env.get("RESEND_FROM") || "Relay <onboarding@resend.dev>";
-  const { data: people } = await supa.from("profiles").select("email").eq("org_id", rec.org_id);
-  const to = (people ?? []).map((p: { email?: string }) => p.email).filter(Boolean) as string[];
+  // Notify the workspace OWNER only — not every member. Emailing all profiles
+  // swept in admins (and anyone else on the team) who shouldn't get client
+  // review pings. Override the recipient with PREVIEW_NOTIFY_EMAIL if set.
+  const override = Deno.env.get("PREVIEW_NOTIFY_EMAIL");
+  let to: string[];
+  if (override) {
+    to = override.split(",").map((s) => s.trim()).filter(Boolean);
+  } else {
+    const { data: owners } = await supa.from("profiles").select("email").eq("org_id", rec.org_id).eq("role", "Owner");
+    to = (owners ?? []).map((p: { email?: string }) => p.email).filter(Boolean) as string[];
+  }
   if (!to.length) return;
   const { count } = await supa.from("preview_comments").select("id", { count: "exact", head: true }).eq("slug", slug);
   const n = count ?? 0;
