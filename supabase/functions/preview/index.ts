@@ -62,9 +62,12 @@ function readCookie(req: Request, name: string): string | null {
 // (it ends up there when a site is bundled/saved from a CF-fronted URL). Baked
 // into a saved file, that beacon throws "Cannot read properties of null
 // (reading 'document')" on load — which the client sees as a red error bar.
-// Match any <script> that references the CF markers and drop it wholesale.
+// The inner match is a tempered token that cannot cross a </script>, so this
+// removes ONLY the single <script> holding the CF marker — never the runtime or
+// bundle scripts around it. (A greedy [\s\S]*? here would swallow everything
+// from the first <script> to the beacon and blank the page.)
 const stripCfBeacon = (s: string) =>
-  s.replace(/<script\b[^>]*>[\s\S]*?(?:__CF\$cv\$params|challenge-platform)[\s\S]*?<\/script>/gi, "");
+  s.replace(/<script\b[^>]*>(?:(?!<\/script>)[\s\S])*?(?:__CF\$cv\$params|challenge-platform)(?:(?!<\/script>)[\s\S])*?<\/script>/gi, "");
 
 const DETERRENT = `<script>
 document.addEventListener('contextmenu',e=>e.preventDefault());

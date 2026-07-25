@@ -14,9 +14,11 @@ const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase()
 // Remove any Cloudflare bot-detection beacon baked into uploaded HTML (it lands
 // there when a site is bundled/saved from a CF-fronted URL and, once frozen into
 // a file, throws "Cannot read properties of null (reading 'document')" on load).
-// The edge function strips it server-side too; this keeps the stored file clean.
+// The tempered inner token cannot cross a </script>, so only the single beacon
+// script is removed — a plain [\s\S]*? would eat the whole bundle. The edge
+// function strips it server-side too; this keeps the stored file clean.
 const stripCfBeacon = (s: string) =>
-  s.replace(/<script\b[^>]*>[\s\S]*?(?:__CF\$cv\$params|challenge-platform)[\s\S]*?<\/script>/gi, '')
+  s.replace(/<script\b[^>]*>(?:(?!<\/script>)[\s\S])*?(?:__CF\$cv\$params|challenge-platform)(?:(?!<\/script>)[\s\S])*?<\/script>/gi, '')
 
 // The AI website preview + outside-build options, shown inside the deal detail.
 // Sources: generate with Claude (server-side Edge Function), upload an HTML file,
