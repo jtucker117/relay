@@ -9,6 +9,14 @@ const FN_BASE = `${window.location.origin}/preview`
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'preview'
 const rand = () => Math.random().toString(36).slice(2, 7)
+const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase()
+
+// Remove any Cloudflare bot-detection beacon baked into uploaded HTML (it lands
+// there when a site is bundled/saved from a CF-fronted URL and, once frozen into
+// a file, throws "Cannot read properties of null (reading 'document')" on load).
+// The edge function strips it server-side too; this keeps the stored file clean.
+const stripCfBeacon = (s: string) =>
+  s.replace(/<script\b[^>]*>[\s\S]*?(?:__CF\$cv\$params|challenge-platform)[\s\S]*?<\/script>/gi, '')
 
 // The AI website preview + outside-build options, shown inside the deal detail.
 // Sources: generate with Claude (server-side Edge Function), upload an HTML file,
@@ -70,10 +78,11 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
     setPublishing(true); setErr(null)
     try {
       const s = `${slugify(deal.company)}-${rand()}`
-      const ac = Math.random().toString(36).slice(2, 8).toUpperCase() // client access code
+      const ac = genCode() // client access code
       if (html !== null) {
+        const clean = stripCfBeacon(html)
         const { error: upErr } = await supabase.storage.from('previews')
-          .upload(`${s}.html`, new Blob([html], { type: 'text/html' }), { upsert: true, contentType: 'text/html' })
+          .upload(`${s}.html`, new Blob([clean], { type: 'text/html' }), { upsert: true, contentType: 'text/html' })
         if (upErr) throw upErr
       }
       const p = pkg(deal.package_id)
@@ -108,6 +117,15 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
     const next = !live
     setLive(next)
     await supabase.from('previews').update({ active: next }).eq('slug', slug)
+  }
+
+  // Access code on/off. Clearing it opens the preview to anyone with the link;
+  // turning it back on mints a fresh code.
+  async function toggleCode() {
+    if (!slug) return
+    const next = code ? null : genCode()
+    setCode(next)
+    await supabase.from('previews').update({ access_code: next }).eq('slug', slug)
   }
 
   function copyLink() {
@@ -153,7 +171,7 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
     if (!file) return
     const reader = new FileReader()
     reader.onload = () => {
-      const content = String(reader.result)
+      const content = stripCfBeacon(String(reader.result))
       setHtml(content); setActiveUrl(null); setErr(null)
       saveDraft({ html: content })
     }
@@ -229,19 +247,30 @@ export default function PreviewSection({ deal }: { deal: Deal }) {
             </div>
           ) : (
             <div style={sharePanel}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: live ? 'var(--green-2)' : 'var(--ink-muted)' }} />
-                <b style={{ fontSize: 13 }}>{live ? 'Live — code-locked' : 'Turned off'}</b>
-                <label style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={live} onChange={toggleLive} style={{ marginRight: 5 }} />
-                  Link active
-                </label>
+                <b style={{ fontSize: 13 }}>{live ? (code ? 'Live — code-locked' : 'Live — open link') : 'Turned off'}</b>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 14 }}>
+                  <label style={{ fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!code} onChange={toggleCode} style={{ marginRight: 5 }} />
+                    Require code
+                  </label>
+                  <label style={{ fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={live} onChange={toggleLive} style={{ marginRight: 5 }} />
+                    Link active
+                  </label>
+                </div>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <input readOnly value={shareUrl} style={{ ...urlInput, fontSize: 12.5 }} onFocus={(e) => e.target.select()} />
                 <button onClick={copyLink} style={ghostBtn}>{copied ? 'Copied!' : 'Copy'}</button>
                 <a href={shareUrl} target="_blank" rel="noreferrer" style={{ ...ghostBtn, textDecoration: 'none', display: 'grid', placeItems: 'center' }}>Open ↗</a>
               </div>
+              {!code && !activeUrl && (
+                <p style={{ color: 'var(--ink-muted)', fontSize: 12, marginTop: 10 }}>
+                  Open link — anyone with the URL can view. Turn on <b>Require code</b> to lock it.
+                </p>
+              )}
               {code && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 13, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--ink-soft)' }}>Access code</span>

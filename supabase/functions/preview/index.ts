@@ -98,7 +98,10 @@ Deno.serve(async (req: Request) => {
   const cookieName = `pv_${slug}`;
   const email = (rec.client_email ?? "").trim();
   const code = (rec.access_code ?? "").trim();
-  const gated = !!(code || email);
+  // The access code is the on/off switch: clear it (access_code = null) to make
+  // the preview open to anyone with the link. Email still works as an alternate
+  // unlock value when a code IS set, but on its own it never gates.
+  const gated = !!code;
 
   if (req.method === "POST") {
     const form = await req.formData();
