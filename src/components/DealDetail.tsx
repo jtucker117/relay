@@ -227,10 +227,6 @@ export default function DealDetail({ deal, onClose, onChange }: {
                 ) : null}
               </Card>
             )}
-          </div>
-
-          {/* RIGHT */}
-          <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
             <Card label="Notes & activity" action={<span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{comments.length} note{comments.length === 1 ? '' : 's'}</span>}>
               <div style={{ display: 'grid', gap: 14, marginBottom: 14 }}>
                 {comments.map((c) => {
@@ -289,7 +285,10 @@ export default function DealDetail({ deal, onClose, onChange }: {
                 </div>
               </div>
             </Card>
+          </div>
 
+          {/* RIGHT — website preview only */}
+          <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
             <Card label="Free preview" accent>
               <PreviewSection deal={d} />
             </Card>
