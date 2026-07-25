@@ -7,7 +7,7 @@ import type { Role } from '../lib/types'
 interface OrgSettings {
   name: string; tagline: string; site: string; email: string; phone: string; addr: string; logo: string
 }
-interface Member { user_id: string; name: string; email: string; role: Role }
+interface Member { user_id: string; name: string; email: string; role: Role; notify_change_requests: boolean }
 interface Invite { id: string; email: string; name: string; role: Role }
 
 const ASSIGNABLE: Role[] = ['Admin', 'Salesperson', 'Builder']
@@ -76,7 +76,7 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
 
   const load = useCallback(async () => {
     const [m, i] = await Promise.all([
-      supabase.from('profiles').select('user_id,name,email,role').eq('org_id', orgId),
+      supabase.from('profiles').select('user_id,name,email,role,notify_change_requests').eq('org_id', orgId),
       supabase.from('invites').select('id,email,name,role').eq('org_id', orgId),
     ])
     setMembers((m.data as Member[]) ?? [])
@@ -88,6 +88,10 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
   async function changeRole(userId: string, newRole: Role) {
     await supabase.from('profiles').update({ role: newRole }).eq('user_id', userId)
     load()
+  }
+  async function toggleNotify(userId: string, next: boolean) {
+    setMembers((ms) => ms.map((m) => (m.user_id === userId ? { ...m, notify_change_requests: next } : m)))
+    await supabase.from('profiles').update({ notify_change_requests: next }).eq('user_id', userId)
   }
   async function removeMember(userId: string) {
     await supabase.from('profiles').delete().eq('user_id', userId)
@@ -136,7 +140,7 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
   return (
     <section style={cardStyle}>
       <h3 style={h3}>Team & users</h3>
-      <p style={sub}>Invite salespeople and builders. Roles decide what each person sees.</p>
+      <p style={sub}>Invite salespeople and builders. Roles decide what each person sees. <b>✉ Notify</b> controls who's emailed when a client requests changes on a preview.</p>
 
       <div style={{ display: 'grid', gap: 2 }}>
         {members.map((m) => {
@@ -151,6 +155,11 @@ function TeamSection({ orgId, meId, myName, orgName }: { orgId: string; meId: st
                 </div>
                 <div style={{ color: 'var(--ink-soft)', fontSize: 12 }}>{m.email}</div>
               </div>
+              <label title="Email this person when a client requests changes on a preview"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: m.notify_change_requests ? 'var(--accent)' : 'var(--ink-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input type="checkbox" checked={m.notify_change_requests} onChange={(e) => toggleNotify(m.user_id, e.target.checked)} />
+                ✉ Notify
+              </label>
               {isOwner ? (
                 <span style={{ color: 'var(--accent)', fontWeight: 600, fontSize: 13 }}>Owner</span>
               ) : (
