@@ -21,10 +21,6 @@ const supa = createClient(SUPABASE_URL, SERVICE_ROLE);
 const enc = new TextEncoder();
 const esc = (s: string) => (s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-// Minimal escaping for a double-quoted `srcdoc` attribute: only `&` and `"`
-// need encoding; the browser reconstructs the original HTML before parsing the
-// frame document. Keeps the inlined payload lean (no need to escape every `<`).
-const srcdocEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
 // Always respond as UTF-8 HTML. Use an explicit Headers object so the runtime
 // never falls back to text/plain (which shows the markup as raw text).
@@ -161,27 +157,19 @@ Deno.serve(async (req: Request) => {
     return html(site, { "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": "frame-ancestors 'self'" });
   }
 
-  // Build the site frame for the portal.
-  //   - Stored HTML is inlined via `srcdoc` (NOT a network `src="…&raw=1"`).
-  //     Reason: on relay.sitestac.com, Cloudflare injects its JS-detection beacon
-  //     into every proxied HTML response. Inside our opaque-origin sandbox frame
-  //     (allow-scripts, no allow-same-origin) that beacon throws
-  //     "Cannot read properties of null (reading 'document')" in the client's
-  //     console. srcdoc has no network response for CF to inject into, so the
-  //     beacon never reaches the frame — while the sandbox stays just as tight.
-  //     Do NOT switch this back to a network src, and do NOT add allow-same-origin
-  //     to silence it (that would give arbitrary preview HTML our origin).
-  //   - External URLs keep the redirect route (they load from their own origin).
-  let frameTag: string;
-  if (rec.external_url) {
-    frameTag = `<iframe src="?p=${slug}&raw=1" title="Website preview" sandbox="allow-scripts"></iframe>`;
-  } else {
-    const { data: file } = await supa.storage.from("previews").download(`${slug}.html`);
-    if (!file) return shell("Missing", `<div class="wrap"><h1>Preview content missing.</h1></div>`);
-    let site = stripCfBeacon(await file.text());
-    site = site.includes("</body>") ? site.replace("</body>", `${DETERRENT}</body>`) : site + DETERRENT;
-    frameTag = `<iframe srcdoc="${srcdocEsc(site)}" title="Website preview" sandbox="allow-scripts"></iframe>`;
-  }
+  // Frame the site via the network ?raw=1 route (a real document URL), NOT srcdoc.
+  //   - srcdoc has no document URL, which breaks bundled sites (blob assets /
+  //     fetches resolve against about:srcdoc) — they render blank — and makes
+  //     in-page "#section" links resolve against the parent and blow away the
+  //     gate cookie. A real ?raw=1 URL renders correctly and scrolls in-frame.
+  //   - `allow-same-origin`: the raw response is same-origin (relay.sitestac.com),
+  //     so Cloudflare's injected JS-detection beacon runs at a REAL origin and no
+  //     longer throws the "reading 'document'" error. Preview content is
+  //     first-party (agency-generated/uploaded), so same-origin is acceptable;
+  //     the stored HTML is also beacon-stripped server-side on the raw route.
+  //   - allow-forms/allow-popups so the previewed site's forms and links work.
+  const sandbox = "allow-scripts allow-same-origin allow-forms allow-popups";
+  const frameTag = `<iframe src="?p=${slug}&raw=1" title="Website preview" sandbox="${sandbox}"></iframe>`;
 
   // Log the view — the client opened the portal.
   await supa.from("previews").update({
